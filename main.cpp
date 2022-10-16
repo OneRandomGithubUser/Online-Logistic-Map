@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <ranges>
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
 namespace emscripten {
@@ -43,6 +44,10 @@ void Render(emscripten::val canvas)
     emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
 }
 
+double LogisticFunction(double r, double input) {
+    return r * input * (1 - input);
+}
+
 void RenderLogisticMap(double DOMHighResTimeStamp)
 {
     int iterationsToSteadyState = 100;
@@ -50,6 +55,9 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     int widthSamplesPerPixel = 1;
     double rLowerBound = 0;
     double rUpperBound = 4;
+    double startingValue = 0.5;
+    double xLowerBound = 0;
+    double xUpperBound = 1;
 
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
@@ -57,19 +65,48 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     auto canvasWidth = canvas["clientWidth"].as<int>();
     auto canvasHeight = canvas["clientHeight"].as<int>();
     std::cout << "logistic map\n";
-    std::vector<unsigned char> data; // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
-    data.reserve(canvasWidth * canvasHeight * 4);
-    for (long int i = 0; i < canvasWidth * canvasHeight; i++) {
+    std::vector<unsigned char> data(canvasWidth * canvasHeight * 4, 0);
+    std::cout << data.size() << " data size\n";
+    int pixelAlphaIndex = 3;
+    for (long int i = 0; i < canvasWidth; i++) {
+        // TODO: make this async
+        double currentR = rLowerBound + (rUpperBound - rLowerBound) * i / canvasWidth;
+        bool print;
+        if (currentR > 3.34 && currentR < 3.345) {
+            print = true;
+        } else {
+            print = false;
+        }
+        std::vector<int> frequencies(canvasHeight, 0);
         for (int j = 0; j < widthSamplesPerPixel; j++)
         {
-            //
+            double currentValue = startingValue;
+            for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
+                currentValue = LogisticFunction(currentR, currentValue);
+            }
+            for (int iteration = 0; iteration < iterationsToShow; iteration++) {
+                currentValue = LogisticFunction(currentR, currentValue);
+                if (print) {std::cout << currentValue << "\n";}
+                if (currentValue > xLowerBound && currentValue < xUpperBound) {
+                    int pixelHeight = std::round(canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound));
+                    frequencies.at(pixelHeight)++;
+                }
+            }
         }
-        // imageDataVal["data"].set(emscripten::val(i), emscripten::val(127));
-        data.emplace_back(128);
-        data.emplace_back(128);
-        data.emplace_back(128);
-        data.emplace_back(128);
+        if (print) {
+            for (auto frequency : frequencies) {
+                std::cout << frequency << "\n";
+            }
+        }
+        for (int j = 0; j < canvasHeight; j++) {
+            int frequency = frequencies.at(j);
+            unsigned char shade = (255 * frequency)/(widthSamplesPerPixel * iterationsToShow);
+            if (print) {std::cout<<(int)shade<<"\n";}
+            data.at(pixelAlphaIndex) = shade;
+            pixelAlphaIndex += 4;
+        }
     }
+    // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
     std::cout << "1\n";
     auto data2 = emscripten::val(data);
     std::cout << "2\n";
@@ -81,9 +118,6 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     std::cout << "6\n";
     ctx.call<void>("putImageData", data6, emscripten::val(0), emscripten::val(0));
     std::cout << "7\n";
-
-    // ctx.call<void>("putImageData", imageDataVal, emscripten::val(0), emscripten::val(0));
-    //for (int i = 0; i < widthSamplesPerPixel * canvasWidth; i++) {}
 }
 
 void RenderPlot(double DOMHighResTimeStamp)
