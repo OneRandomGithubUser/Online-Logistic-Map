@@ -1,0 +1,64 @@
+body {
+    margin: 0 !important;
+    padding: 0 !important;
+    font-family: Arial, Helvetica, sans-serif;
+    -webkit-tap-highlight-color: transparent; /* apparently does not work with Firefox mobile? */
+}
+.warning {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    z-index: 50 !important;
+    background: white;
+    font-size: xx-large;
+    align-items: center;
+    justify-content: center;
+    display: flex;
+}
+.canvas {
+    position: fixed;
+    cursor: crosshair;
+    border: 1px solid black;
+    top: 0;
+    bottom: 100px;
+    margin: 0;
+}
+#canvas-plot
+{
+    left: 0;
+    right: 50%;
+}
+#canvas-logistic-map
+{
+    left: 50%;
+    right: 100%;
+}
+#ui-ribbon
+{
+    position: fixed;
+    bottom: 0;
+    height: 100px;
+    width: 100%;
+}
+.ui-input
+{
+    display: flex;
+    text-align: center;
+    justify-content: center;
+    margin: auto;
+}
+#x-input
+{
+    left: 0;
+    right: 75%;
+}
+#r-input
+{
+    left: 25%;
+    right: 50%;
+}
+#equation-input
+{
+    left: 50%;
+    right: 0;
+}
