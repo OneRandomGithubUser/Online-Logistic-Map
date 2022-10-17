@@ -47,15 +47,16 @@ double LogisticFunction(double r, double input) {
 void RenderLogisticMap(double DOMHighResTimeStamp)
 {
     int iterationsToSteadyState = 1000;
-    int iterationsToShow = 5000;
+    int iterationsToShow = 2000;
     int extraSymmetricalSamplesPerPixel = 2;
-    double contrast = 25;
+    double contrast = 50;
     double rLowerBound = 2.75;
     double rUpperBound = 3.99;
     double startingValue = 0.5;
     double xLowerBound = 0;
     double xUpperBound = 1;
     bool antiAliasingEnabled = true;
+    bool logarithmicShadingEnabled = true; // alternative is linear shading
 
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
@@ -68,23 +69,30 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     int widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
     std::vector<double> columnFrequencies(canvasHeight, 0);
     std::vector<std::vector<double>> frequencies(canvasWidth, columnFrequencies);
+    std::vector<double> maxFrequencies(canvasWidth, 0);
+    double scalingFactor = 1.0 / (widthSamplesPerPixel * iterationsToShow);
     for (long int i = 0; i < canvasWidth; i++) {
         // TODO: make this async
         double pixelR = rLowerBound + rPixelStep * i;
-        std::vector<double> *currentFrequencies = &frequencies.at(i);
-        std::vector<double> *previousFrequencies;
-        if (i > 0) {
-            previousFrequencies = &frequencies.at(i - 1);
+        auto& currentFrequencies = frequencies.at(i);
+        auto& currentMaxFrequency = maxFrequencies.at(i);
+        int previousFrequenciesIndex;
+        if (i != 0) {
+            previousFrequenciesIndex = i - 1;
         } else {
-            previousFrequencies = currentFrequencies;
+            previousFrequenciesIndex = i;
         }
-        std::vector<double> *nextFrequencies;
-        if (i < canvasWidth - 1) {
-            nextFrequencies = &frequencies.at(i + 1);
+        auto& previousFrequencies = frequencies.at(previousFrequenciesIndex);
+        auto& previousMaxFrequency = maxFrequencies.at(previousFrequenciesIndex);
+        int nextFrequenciesIndex;
+        if (i != canvasWidth - 1) {
+            nextFrequenciesIndex = i + 1;
         } else {
-            nextFrequencies = currentFrequencies;
+            nextFrequenciesIndex = i;
         }
-        for (int j = -extraSymmetricalSamplesPerPixel; j < extraSymmetricalSamplesPerPixel; j++) {
+        auto& nextFrequencies = frequencies.at(nextFrequenciesIndex);
+        auto& nextMaxFrequency = maxFrequencies.at(nextFrequenciesIndex);
+        for (int j = -extraSymmetricalSamplesPerPixel; j <= extraSymmetricalSamplesPerPixel; j++) {
             if (i == 0 && j < 0) { continue; } // don't go below the rLowerBound
             if (i == canvasWidth - 1 && j > 0) { continue; } // don't go above the rUpperBound
             double currentR = pixelR + j * rPixelStep / widthSamplesPerPixel;
@@ -96,40 +104,70 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
                 currentValue = LogisticFunction(currentR, currentValue);
                 if (currentValue > xLowerBound && currentValue < xUpperBound) {
                     double subpixelHeight = canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
-                    int scalingFactor;
                     if (antiAliasingEnabled) {
                         int lowerPixelHeight = std::floor(subpixelHeight);
                         int upperPixelHeight = std::ceil(subpixelHeight);
                         // won't check for lowerPixelHeight == upperPixelHeight since that will be very rare
+                        // subpixelHeight - lowerPixelHeight and upperPixelHeight - subpixelHeight might seem switched but they're not
+                        // TODO: remove lots of repetition by defining a function
                         if (j < 0) {
-                            previousFrequencies->at(lowerPixelHeight) +=
-                                    (subpixelHeight - lowerPixelHeight) * (-j / widthSamplesPerPixel);
-                            currentFrequencies->at(lowerPixelHeight) += (subpixelHeight - lowerPixelHeight) *
-                                                                        ((extraSymmetricalSamplesPerPixel + j) /
-                                                                         widthSamplesPerPixel);
-                            previousFrequencies->at(upperPixelHeight) +=
-                                    (upperPixelHeight - subpixelHeight) * (-j / widthSamplesPerPixel);
-                            currentFrequencies->at(upperPixelHeight) += (upperPixelHeight - subpixelHeight) *
-                                                                        ((extraSymmetricalSamplesPerPixel + j) /
-                                                                         widthSamplesPerPixel);
+                            previousFrequencies.at(lowerPixelHeight) +=
+                                    (upperPixelHeight - subpixelHeight) * (-j / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (previousMaxFrequency < previousFrequencies.at(lowerPixelHeight)) {
+                                previousMaxFrequency = previousFrequencies.at(lowerPixelHeight);
+                            }
+                            currentFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) *
+                                    ((widthSamplesPerPixel + j) / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
+                                currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                            }
+                            previousFrequencies.at(upperPixelHeight) +=
+                                    (subpixelHeight - lowerPixelHeight) * (-j / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (previousMaxFrequency < previousFrequencies.at(upperPixelHeight)) {
+                                previousMaxFrequency = previousFrequencies.at(upperPixelHeight);
+                            }
+                            currentFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) *
+                                                                        ((widthSamplesPerPixel + j) / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
+                                currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                            }
                         } else if (j == 0) {
-                            currentFrequencies->at(lowerPixelHeight) += (subpixelHeight - lowerPixelHeight);
-                            currentFrequencies->at(upperPixelHeight) += (upperPixelHeight - subpixelHeight);
+                            currentFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) * scalingFactor;
+                            if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
+                                currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                            }
+                            currentFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) * scalingFactor;
+                            if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
+                                currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                            }
                         } else {
-                            currentFrequencies->at(lowerPixelHeight) +=
-                                    (subpixelHeight - lowerPixelHeight) * (-j / widthSamplesPerPixel);
-                            nextFrequencies->at(lowerPixelHeight) += (subpixelHeight - lowerPixelHeight) *
-                                                                     ((extraSymmetricalSamplesPerPixel + j) /
-                                                                      widthSamplesPerPixel);
-                            currentFrequencies->at(upperPixelHeight) +=
-                                    (upperPixelHeight - subpixelHeight) * (-j / widthSamplesPerPixel);
-                            nextFrequencies->at(upperPixelHeight) += (upperPixelHeight - subpixelHeight) *
-                                                                     ((extraSymmetricalSamplesPerPixel + j) /
-                                                                      widthSamplesPerPixel);
+                            currentFrequencies.at(lowerPixelHeight) +=
+                                    (upperPixelHeight - subpixelHeight) * (j / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
+                                currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                            }
+                            nextFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) *
+                                    ((widthSamplesPerPixel - j) / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (nextMaxFrequency < nextFrequencies.at(lowerPixelHeight)) {
+                                nextMaxFrequency = nextFrequencies.at(lowerPixelHeight);
+                            }
+                            currentFrequencies.at(upperPixelHeight) +=
+                                    (subpixelHeight - lowerPixelHeight) * (j / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
+                                currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                            }
+                            nextFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) *
+                                    ((widthSamplesPerPixel - j) / (double) widthSamplesPerPixel) * scalingFactor;
+                            if (nextMaxFrequency < nextFrequencies.at(upperPixelHeight)) {
+                                nextMaxFrequency = nextFrequencies.at(upperPixelHeight);
+                            }
                         }
                     } else {
                         int pixelHeight = std::round(subpixelHeight);
-                        currentFrequencies->at(pixelHeight)++;
+                        currentFrequencies.at(pixelHeight)++;
+                        if (currentMaxFrequency < currentFrequencies.at(pixelHeight)) {
+                            currentMaxFrequency = currentFrequencies.at(pixelHeight);
+                        }
                     }
                 }
             }
@@ -140,9 +178,15 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     for (long int i = 0; i < canvasWidth; i++) {
         int pixelAlphaIndex = (canvasWidth * (canvasHeight - 1) + i) * 4 + 3;
         std::vector<double> currentFrequencies = frequencies.at(i);
+        double max = maxFrequencies.at(i);
         for (int j = 0; j < canvasHeight; j++) {
-            double frequency = currentFrequencies.at(j);
-            unsigned char shade = std::min(255, (int) std::round((255.0 * frequency)/(widthSamplesPerPixel * contrast)));
+            unsigned char shade;
+            if (logarithmicShadingEnabled) {
+                double logarithmicFrequency = std::log(contrast * (currentFrequencies.at(j) / widthSamplesPerPixel) + 1) / (std::log(contrast + 1) * max);
+                shade = std::max(0, std::min(255, (int) std::round(255 * logarithmicFrequency)));
+            } else {
+                shade = std::min(255, (int) std::round(255 * currentFrequencies.at(j) / (widthSamplesPerPixel * max)));
+            }
             if (shade != 0) {
                 data.at(pixelAlphaIndex) = shade;
             }
