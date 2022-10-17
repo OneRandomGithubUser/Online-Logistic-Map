@@ -7,6 +7,7 @@
 #include <string>
 #include <iostream>
 #include <ranges>
+#include <algorithm>
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
 namespace emscripten {
@@ -50,9 +51,10 @@ double LogisticFunction(double r, double input) {
 
 void RenderLogisticMap(double DOMHighResTimeStamp)
 {
-    int iterationsToSteadyState = 100;
-    int iterationsToShow = 100;
-    int widthSamplesPerPixel = 1;
+    int iterationsToSteadyState = 1000;
+    int iterationsToShow = 5000;
+    int widthSamplesPerPixel = 3;
+    int contrast = 50;
     double rLowerBound = 0;
     double rUpperBound = 4;
     double startingValue = 0.5;
@@ -66,17 +68,9 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     auto canvasHeight = canvas["clientHeight"].as<int>();
     std::cout << "logistic map\n";
     std::vector<unsigned char> data(canvasWidth * canvasHeight * 4, 0);
-    std::cout << data.size() << " data size\n";
-    int pixelAlphaIndex = 3;
     for (long int i = 0; i < canvasWidth; i++) {
         // TODO: make this async
         double currentR = rLowerBound + (rUpperBound - rLowerBound) * i / canvasWidth;
-        bool print;
-        if (currentR > 3.34 && currentR < 3.345) {
-            print = true;
-        } else {
-            print = false;
-        }
         std::vector<int> frequencies(canvasHeight, 0);
         for (int j = 0; j < widthSamplesPerPixel; j++)
         {
@@ -86,38 +80,29 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
             }
             for (int iteration = 0; iteration < iterationsToShow; iteration++) {
                 currentValue = LogisticFunction(currentR, currentValue);
-                if (print) {std::cout << currentValue << "\n";}
                 if (currentValue > xLowerBound && currentValue < xUpperBound) {
                     int pixelHeight = std::round(canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound));
                     frequencies.at(pixelHeight)++;
                 }
             }
         }
-        if (print) {
-            for (auto frequency : frequencies) {
-                std::cout << frequency << "\n";
-            }
-        }
+        int pixelAlphaIndex = i * 4 + 3;
         for (int j = 0; j < canvasHeight; j++) {
             int frequency = frequencies.at(j);
-            unsigned char shade = (255 * frequency)/(widthSamplesPerPixel * iterationsToShow);
-            if (print) {std::cout<<(int)shade<<"\n";}
-            data.at(pixelAlphaIndex) = shade;
-            pixelAlphaIndex += 4;
+            unsigned char shade = std::min(255, (int) std::round((contrast * 255.0 * frequency)/(widthSamplesPerPixel * iterationsToShow)));
+            if (shade != 0) {
+                data.at(pixelAlphaIndex) = shade;
+            }
+            pixelAlphaIndex += canvasWidth * 4;
         }
     }
     // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
-    std::cout << "1\n";
     auto data2 = emscripten::val(data);
-    std::cout << "2\n";
     auto Uint8ClampedArray = emscripten::val::global("Uint8ClampedArray");
     auto data4 = Uint8ClampedArray.new_(data2);
-    std::cout << "4\n";
     auto ImageData = emscripten::val::global("ImageData");
     auto data6 = ImageData.new_(data4, canvas["clientWidth"], canvas["clientHeight"]);
-    std::cout << "6\n";
     ctx.call<void>("putImageData", data6, emscripten::val(0), emscripten::val(0));
-    std::cout << "7\n";
 }
 
 void RenderPlot(double DOMHighResTimeStamp)
