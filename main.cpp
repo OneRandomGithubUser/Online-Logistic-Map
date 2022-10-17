@@ -48,13 +48,14 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
 {
     int iterationsToSteadyState = 1000;
     int iterationsToShow = 5000;
-    int extraSymmetricalSamplesPerPixel = 1;
+    int extraSymmetricalSamplesPerPixel = 2;
     double contrast = 25;
     double rLowerBound = 2.75;
-    double rUpperBound = 3.999;
+    double rUpperBound = 3.99;
     double startingValue = 0.5;
     double xLowerBound = 0;
     double xUpperBound = 1;
+    bool antiAliasingEnabled = true;
 
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
@@ -62,17 +63,30 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     auto canvasWidth = canvas["clientWidth"].as<int>();
     auto canvasHeight = canvas["clientHeight"].as<int>();
     std::cout << "logistic map\n";
-    std::vector<unsigned char> data(canvasWidth * canvasHeight * 4, 0);
+
     double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
     int widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
+    std::vector<double> columnFrequencies(canvasHeight, 0);
+    std::vector<std::vector<double>> frequencies(canvasWidth, columnFrequencies);
     for (long int i = 0; i < canvasWidth; i++) {
         // TODO: make this async
         double pixelR = rLowerBound + rPixelStep * i;
-        std::vector<int> frequencies(canvasHeight, 0);
-        for (int j = -extraSymmetricalSamplesPerPixel; j < extraSymmetricalSamplesPerPixel; j++)
-        {
-            if (i == 0 && j < 0) {continue;} // don't go below the rLowerBound
-            if (i == canvasWidth - 1 && j > 0) {continue;} // don't go above the rUpperBound
+        std::vector<double> *currentFrequencies = &frequencies.at(i);
+        std::vector<double> *previousFrequencies;
+        if (i > 0) {
+            previousFrequencies = &frequencies.at(i - 1);
+        } else {
+            previousFrequencies = currentFrequencies;
+        }
+        std::vector<double> *nextFrequencies;
+        if (i < canvasWidth - 1) {
+            nextFrequencies = &frequencies.at(i + 1);
+        } else {
+            nextFrequencies = currentFrequencies;
+        }
+        for (int j = -extraSymmetricalSamplesPerPixel; j < extraSymmetricalSamplesPerPixel; j++) {
+            if (i == 0 && j < 0) { continue; } // don't go below the rLowerBound
+            if (i == canvasWidth - 1 && j > 0) { continue; } // don't go above the rUpperBound
             double currentR = pixelR + j * rPixelStep / widthSamplesPerPixel;
             double currentValue = startingValue;
             for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
@@ -81,18 +95,53 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
             for (int iteration = 0; iteration < iterationsToShow; iteration++) {
                 currentValue = LogisticFunction(currentR, currentValue);
                 if (currentValue > xLowerBound && currentValue < xUpperBound) {
-                    int pixelHeight = std::round(canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound));
-                    if (i == 0 && j < 0 || i == canvasWidth - 1 && j > 0) {
-                        frequencies.at(pixelHeight) += extraSymmetricalSamplesPerPixel; // account for not going below the rLowerBound and above the rUpperBound
+                    double subpixelHeight = canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
+                    int scalingFactor;
+                    if (antiAliasingEnabled) {
+                        int lowerPixelHeight = std::floor(subpixelHeight);
+                        int upperPixelHeight = std::ceil(subpixelHeight);
+                        // won't check for lowerPixelHeight == upperPixelHeight since that will be very rare
+                        if (j < 0) {
+                            previousFrequencies->at(lowerPixelHeight) +=
+                                    (subpixelHeight - lowerPixelHeight) * (-j / widthSamplesPerPixel);
+                            currentFrequencies->at(lowerPixelHeight) += (subpixelHeight - lowerPixelHeight) *
+                                                                        ((extraSymmetricalSamplesPerPixel + j) /
+                                                                         widthSamplesPerPixel);
+                            previousFrequencies->at(upperPixelHeight) +=
+                                    (upperPixelHeight - subpixelHeight) * (-j / widthSamplesPerPixel);
+                            currentFrequencies->at(upperPixelHeight) += (upperPixelHeight - subpixelHeight) *
+                                                                        ((extraSymmetricalSamplesPerPixel + j) /
+                                                                         widthSamplesPerPixel);
+                        } else if (j == 0) {
+                            currentFrequencies->at(lowerPixelHeight) += (subpixelHeight - lowerPixelHeight);
+                            currentFrequencies->at(upperPixelHeight) += (upperPixelHeight - subpixelHeight);
+                        } else {
+                            currentFrequencies->at(lowerPixelHeight) +=
+                                    (subpixelHeight - lowerPixelHeight) * (-j / widthSamplesPerPixel);
+                            nextFrequencies->at(lowerPixelHeight) += (subpixelHeight - lowerPixelHeight) *
+                                                                     ((extraSymmetricalSamplesPerPixel + j) /
+                                                                      widthSamplesPerPixel);
+                            currentFrequencies->at(upperPixelHeight) +=
+                                    (upperPixelHeight - subpixelHeight) * (-j / widthSamplesPerPixel);
+                            nextFrequencies->at(upperPixelHeight) += (upperPixelHeight - subpixelHeight) *
+                                                                     ((extraSymmetricalSamplesPerPixel + j) /
+                                                                      widthSamplesPerPixel);
+                        }
                     } else {
-                        frequencies.at(pixelHeight)++;
+                        int pixelHeight = std::round(subpixelHeight);
+                        currentFrequencies->at(pixelHeight)++;
                     }
                 }
             }
         }
+    }
+
+    std::vector<unsigned char> data(canvasWidth * canvasHeight * 4, 0);
+    for (long int i = 0; i < canvasWidth; i++) {
         int pixelAlphaIndex = (canvasWidth * (canvasHeight - 1) + i) * 4 + 3;
+        std::vector<double> currentFrequencies = frequencies.at(i);
         for (int j = 0; j < canvasHeight; j++) {
-            int frequency = frequencies.at(j);
+            double frequency = currentFrequencies.at(j);
             unsigned char shade = std::min(255, (int) std::round((255.0 * frequency)/(widthSamplesPerPixel * contrast)));
             if (shade != 0) {
                 data.at(pixelAlphaIndex) = shade;
@@ -107,6 +156,7 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     auto ImageData = emscripten::val::global("ImageData");
     auto data6 = ImageData.new_(data4, canvas["clientWidth"], canvas["clientHeight"]);
     ctx.call<void>("putImageData", data6, emscripten::val(0), emscripten::val(0));
+    std::cout << "logistic map finished\n";
 }
 
 void RenderPlot(double DOMHighResTimeStamp)
