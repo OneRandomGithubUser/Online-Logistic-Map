@@ -40,11 +40,6 @@ namespace emscripten {
 }  // namespace emscripten
 
 
-void Render(emscripten::val canvas)
-{
-    emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
-}
-
 double LogisticFunction(double r, double input) {
     return r * input * (1 - input);
 }
@@ -53,10 +48,10 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
 {
     int iterationsToSteadyState = 1000;
     int iterationsToShow = 5000;
-    int widthSamplesPerPixel = 3;
-    int contrast = 50;
-    double rLowerBound = 0;
-    double rUpperBound = 4;
+    int extraSymmetricalSamplesPerPixel = 1;
+    double contrast = 25;
+    double rLowerBound = 2.75;
+    double rUpperBound = 3.999;
     double startingValue = 0.5;
     double xLowerBound = 0;
     double xUpperBound = 1;
@@ -68,12 +63,17 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     auto canvasHeight = canvas["clientHeight"].as<int>();
     std::cout << "logistic map\n";
     std::vector<unsigned char> data(canvasWidth * canvasHeight * 4, 0);
+    double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
+    int widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
     for (long int i = 0; i < canvasWidth; i++) {
         // TODO: make this async
-        double currentR = rLowerBound + (rUpperBound - rLowerBound) * i / canvasWidth;
+        double pixelR = rLowerBound + rPixelStep * i;
         std::vector<int> frequencies(canvasHeight, 0);
-        for (int j = 0; j < widthSamplesPerPixel; j++)
+        for (int j = -extraSymmetricalSamplesPerPixel; j < extraSymmetricalSamplesPerPixel; j++)
         {
+            if (i == 0 && j < 0) {continue;} // don't go below the rLowerBound
+            if (i == canvasWidth - 1 && j > 0) {continue;} // don't go above the rUpperBound
+            double currentR = pixelR + j * rPixelStep / widthSamplesPerPixel;
             double currentValue = startingValue;
             for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
                 currentValue = LogisticFunction(currentR, currentValue);
@@ -82,18 +82,22 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
                 currentValue = LogisticFunction(currentR, currentValue);
                 if (currentValue > xLowerBound && currentValue < xUpperBound) {
                     int pixelHeight = std::round(canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound));
-                    frequencies.at(pixelHeight)++;
+                    if (i == 0 && j < 0 || i == canvasWidth - 1 && j > 0) {
+                        frequencies.at(pixelHeight) += extraSymmetricalSamplesPerPixel; // account for not going below the rLowerBound and above the rUpperBound
+                    } else {
+                        frequencies.at(pixelHeight)++;
+                    }
                 }
             }
         }
-        int pixelAlphaIndex = i * 4 + 3;
+        int pixelAlphaIndex = (canvasWidth * (canvasHeight - 1) + i) * 4 + 3;
         for (int j = 0; j < canvasHeight; j++) {
             int frequency = frequencies.at(j);
-            unsigned char shade = std::min(255, (int) std::round((contrast * 255.0 * frequency)/(widthSamplesPerPixel * iterationsToShow)));
+            unsigned char shade = std::min(255, (int) std::round((255.0 * frequency)/(widthSamplesPerPixel * contrast)));
             if (shade != 0) {
                 data.at(pixelAlphaIndex) = shade;
             }
-            pixelAlphaIndex += canvasWidth * 4;
+            pixelAlphaIndex -= canvasWidth * 4;
         }
     }
     // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
@@ -122,21 +126,22 @@ void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten:
     ctx.set("textAlign", emscripten::val("center"));
     ctx.set("textBaseline", emscripten::val("middle"));
     ctx.set("font", emscripten::val("20px Arial"));
-    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
-    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
 }
 
 void InitializeCanvases(emscripten::val event)
 {
     emscripten::val document = emscripten::val::global("document");
     document.call<emscripten::val>("querySelectorAll", emscripten::val(".canvas")).call<void>("forEach", emscripten::val::module_property("InitializeCanvas"));
+    emscripten::val window = emscripten::val::global("window");
+    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
+    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
 }
 
 void InteractWithCanvas(emscripten::val event)
 {
     emscripten::val window = emscripten::val::global("window");
-    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
-    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
+    // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
+    // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
 }
 
 void InitializeAllSettings()
@@ -153,7 +158,7 @@ int main()
     document.call<void>("addEventListener", emscripten::val("mousemove"), emscripten::val::module_property("InteractWithCanvas"));
 
     // initialize width and height of the canvas
-    document.call<emscripten::val>("querySelectorAll", emscripten::val(".canvas")).call<void>("forEach", emscripten::val::module_property("InitializeCanvas"));
+    InitializeCanvases(emscripten::val::null());
 
     // retrieve all settings from localStorage and set the appropriate boxes to "checked" and put the appropriate data into preview
     InitializeAllSettings();
@@ -167,5 +172,4 @@ EMSCRIPTEN_BINDINGS(bindings)\
   emscripten::function("InitializeCanvas", InitializeCanvas);\
   emscripten::function("RenderLogisticMap", RenderLogisticMap);\
   emscripten::function("RenderPlot", RenderPlot);\
-  emscripten::function("Render", Render);\
 };
