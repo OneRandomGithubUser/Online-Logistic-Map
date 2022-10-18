@@ -49,7 +49,7 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     int iterationsToSteadyState = 1000;
     int iterationsToShow = 2000;
     int extraSymmetricalSamplesPerPixel = 2;
-    double contrast = 50;
+    double logFactor = 8;
     double rLowerBound = 2.75;
     double rUpperBound = 3.99;
     double startingValue = 0.5;
@@ -57,13 +57,17 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
     double xUpperBound = 1;
     bool antiAliasingEnabled = true;
     bool logarithmicShadingEnabled = true; // alternative is linear shading
+    unsigned char backgroundRGBA[4] = {255, 255, 255, 0};
+    unsigned char maxLogisticMapRGBA[4] = {0, 0, 0, 255};
+    unsigned char minLogisticMapRGBA[4] = {255, 255, 255, 0};
 
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
     auto ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
     auto canvasWidth = canvas["clientWidth"].as<int>();
     auto canvasHeight = canvas["clientHeight"].as<int>();
-    std::cout << "logistic map\n";
+
+    std::cout << "calculating logistic map\n";
 
     double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
     int widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
@@ -174,23 +178,73 @@ void RenderLogisticMap(double DOMHighResTimeStamp)
         }
     }
 
+    std::cout << "drawing logistic map\n";
+
+    int rangeRGBA[4];
+    for (int i = 0; i < 4; i++) {
+        rangeRGBA[i] = maxLogisticMapRGBA[i] - minLogisticMapRGBA[i];
+    }
     std::vector<unsigned char> data(canvasWidth * canvasHeight * 4, 0);
+    double generalScalingFactor;
+    if (logarithmicShadingEnabled) {
+        generalScalingFactor = -std::log(widthSamplesPerPixel) / logFactor;
+        // generalScalingFactor = std::log(1 / widthSamplesPerPixel) / logFactor
+    } else {
+        generalScalingFactor = 1.0 / widthSamplesPerPixel;
+    }
     for (long int i = 0; i < canvasWidth; i++) {
-        int pixelAlphaIndex = (canvasWidth * (canvasHeight - 1) + i) * 4 + 3;
+        int pixelIndex = (canvasWidth * (canvasHeight - 1) + i) * 4;
         std::vector<double> currentFrequencies = frequencies.at(i);
         double max = maxFrequencies.at(i);
+        double columnScalingFactor;
+        if (logarithmicShadingEnabled) {
+            columnScalingFactor = generalScalingFactor - std::log(max) / logFactor;
+            // columnScalingFactor = std::log(1 / (widthSamplesPerPixel * max)) / logFactor
+        } else {
+            columnScalingFactor = generalScalingFactor / max;
+            // columnScalingFactor = 1 / (max * widthSamplesPerPixel)
+        }
         for (int j = 0; j < canvasHeight; j++) {
-            unsigned char shade;
+            auto currentFrequency = currentFrequencies.at(j);
+            if (currentFrequency == 0) {
+                for (int i = 0; i < 4; i++) {
+                    data.at(pixelIndex + i) = backgroundRGBA[i];
+                }
+            } else {
+                double clampedPixelScalingFactor;
+                if (logarithmicShadingEnabled) {
+                    double pixelScalingFactor = std::log(currentFrequency) / logFactor + columnScalingFactor;
+                    // pixelScalingFactor = std::log(currentFrequency / (widthSamplesPerPixel * max)) / logFactor
+                    clampedPixelScalingFactor = std::min(255.0, std::max(0.0, pixelScalingFactor + 1));
+                    // pixelScalingFactor scales from [-1, 0] for x in [e^-logFactor, 1] and [-infinity, 0] for x in [0, 1] barring anti-aliasing inaccuracy
+                    // clampedPixelScalingFactor scales from [0, 1] for x in [e^-logFactor, 1] and for x in [0, 1]
+                } else {
+                    double pixelScalingFactor = currentFrequency * columnScalingFactor;
+                    clampedPixelScalingFactor = std::min(255.0, std::max(0.0, pixelScalingFactor));
+                    // pixelScalingFactor = currentFrequency / (max * widthSamplesPerPixel)
+                    // pixelScalingFactor scales from [0, 1] for x in [0, 1] barring anti-aliasing inaccuracy
+                }
+                for (int i = 0; i < 4; i++) {
+                    data.at(pixelIndex + i) = clampedPixelScalingFactor * rangeRGBA[i] + minLogisticMapRGBA[i];
+                }
+            }
+            /*
+            double pixelShade; // 0 to 1
             if (logarithmicShadingEnabled) {
-                double logarithmicFrequency = std::log(contrast * (currentFrequencies.at(j) / widthSamplesPerPixel) + 1) / (std::log(contrast + 1) * max);
+                double logarithmicFrequency = std::log(logFactor * (currentFrequencies.at(j) / widthSamplesPerPixel) + 1) / (std::log(logFactor + 1) * max);
                 shade = std::max(0, std::min(255, (int) std::round(255 * logarithmicFrequency)));
             } else {
                 shade = std::min(255, (int) std::round(255 * currentFrequencies.at(j) / (widthSamplesPerPixel * max)));
             }
             if (shade != 0) {
-                data.at(pixelAlphaIndex) = shade;
+                // this is so that background pixels are different from shaded pixels in programs that don't accept alpha values
+                data.at(pixelIndex) = logisticMapRGBA[0];
+                data.at(pixelIndex + 1) = 0;
+                data.at(pixelIndex + 2) = 0;
+                data.at(pixelIndex + 3) = shade;
             }
-            pixelAlphaIndex -= canvasWidth * 4;
+            */
+            pixelIndex -= canvasWidth * 4;
         }
     }
     // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
