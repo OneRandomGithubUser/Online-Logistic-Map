@@ -8,6 +8,7 @@
 #include <iostream>
 #include <ranges>
 #include <algorithm>
+#include <thread>
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
 namespace emscripten {
@@ -57,6 +58,13 @@ public:
     std::array<unsigned char, 4> maxLogisticMapRGBA;
     std::array<unsigned char, 4> minLogisticMapRGBA;
 
+    // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
+    // through the UI. It is read only by CalculateLogisticMap.
+    // This variable will also not be locked until the very moment CalculateLogisticMao changes it.
+    // That is fine since a change in this variable will initiate a recalculation anyways in CalculateLogisticMap - no
+    // reason to continue calculating something that will need to be recalculated anyways!
+    bool needsToRecalculate;
+
 private:
     std::vector<std::vector<double>> frequencies;
     std::vector<double> maxFrequencies;
@@ -90,6 +98,7 @@ public:
         minLogisticMapRGBA.at(1) = 0;
         minLogisticMapRGBA.at(2) = 0;
         minLogisticMapRGBA.at(3) = 0;
+        needsToRecalculate = false;
     }
     void calculateLogisticMap(int canvasWidth, int canvasHeight) {
         std::cout << "calculating logistic map\n";
@@ -100,6 +109,9 @@ public:
         std::vector <std::vector<double>> frequencies(canvasWidth, columnFrequencies);
         double scalingFactor = 1.0 / (widthSamplesPerPixel * iterationsToShow);
         for (long int i = 0; i < canvasWidth; i++) {
+            if (needsToRecalculate) {
+                break;
+            }
             // TODO: make this async
             double pixelR = rLowerBound + rPixelStep * i;
             auto &currentFrequencies = frequencies.at(i);
@@ -216,6 +228,7 @@ public:
         }
         this->frequencies = frequencies;
         this->maxFrequencies = maxFrequencies;
+        std::cout << "calculated logistic map\n";
     }
 
     void drawLogisticMap(emscripten::val canvas) {
@@ -278,18 +291,38 @@ public:
         auto ImageData = emscripten::val::global("ImageData");
         auto data6 = ImageData.new_(data4, canvas["clientWidth"], canvas["clientHeight"]);
         ctx.call<void>("putImageData", data6, emscripten::val(0), emscripten::val(0));
+        std::cout << "drew logistic map\n";
     }
 };
 
-void RenderLogisticMap(double DOMHighResTimeStamp) {
+void ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
     static auto logisticMap = LogisticMap();
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
-    auto ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
-    auto canvasWidth = canvas["clientWidth"].as<int>();
-    auto canvasHeight = canvas["clientHeight"].as<int>();
-    logisticMap.calculateLogisticMap(canvasWidth, canvasHeight);
-    logisticMap.drawLogisticMap(canvas);
+    if (resizeLogisticMap) {
+        auto canvasWidth = canvas["clientWidth"].as<int>();
+        auto canvasHeight = canvas["clientHeight"].as<int>();
+        std::thread calculations(&LogisticMap::calculateLogisticMap, logisticMap, canvasWidth, canvasHeight);
+        calculations.detach();
+    }
+    if (renderLogisticMap) {
+        //logisticMap.drawLogisticMap(canvas);
+    }
+}
+
+void RenderLogisticMap(double DOMHighResTimeStamp) {
+    ManipulateLogisticMap(false, false, true);
+    emscripten::val window = emscripten::val::global("window");
+    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
+    /*
+    if (needsToRecalculate) {
+        needsToRecalculate = false;
+        // hmm, could this cause a memory leak if the user keeps on changing values before the function can complete?
+        calculateLogisticMap(canvasWidth, canvasHeight);
+    } else {
+        drawLogisticMap(canvas);
+    }
+     */
 }
 
 void RenderPlot(double DOMHighResTimeStamp)
@@ -316,6 +349,7 @@ void InitializeCanvases(emscripten::val event)
     emscripten::val document = emscripten::val::global("document");
     document.call<emscripten::val>("querySelectorAll", emscripten::val(".canvas")).call<void>("forEach", emscripten::val::module_property("InitializeCanvas"));
     emscripten::val window = emscripten::val::global("window");
+    ManipulateLogisticMap(true, true, false);
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
 }
