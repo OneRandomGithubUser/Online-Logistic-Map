@@ -17,36 +17,46 @@ body {
     display: flex;
 }
 .canvas {
-    position: fixed;
     cursor: crosshair;
     border: 1px solid black;
+}
+.panel, #progressbar-logistic-map
+{
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+}
+#label-progressbar-logistic-map
+{
+    font-family: monospace;
+}
+#plot-panel
+{
     top: 0;
     bottom: 100px;
-    margin: 0;
-}
-#canvas-plot
-{
     left: 0;
     right: 50%;
+    width: 50%;
+}
+#logistic-map-panel
+{
+    top: 0;
+    bottom: 100px;
+    left: 50%;
+    right: 100%;
+    width: 50%;
 }
 #canvas-logistic-map
 {
-    left: 50%;
-    right: 100%;
+    position: absolute;
 }
 #ui-ribbon
 {
-    position: fixed;
     bottom: 0;
     height: 100px;
     width: 100%;
-}
-.ui-input
-{
-    display: flex;
-    text-align: center;
-    justify-content: center;
-    margin: auto;
 }
 #x-input
 {

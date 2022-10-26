@@ -65,6 +65,9 @@ public:
     // reason to continue calculating something that will need to be recalculated anyways!
     bool needsToRecalculate;
 
+    bool currentlyCalculating;
+    int rValuesCalculated;
+
 private:
     std::vector<std::vector<double>> frequencies;
     std::vector<double> maxFrequencies;
@@ -99,9 +102,13 @@ public:
         minLogisticMapRGBA.at(2) = 0;
         minLogisticMapRGBA.at(3) = 0;
         needsToRecalculate = false;
+        currentlyCalculating = false;
+        rValuesCalculated = 0;
     }
     void calculateLogisticMap(int canvasWidth, int canvasHeight) {
         std::cout << "calculating logistic map\n";
+        currentlyCalculating = true;
+        rValuesCalculated = 0;
         double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
         int widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
         std::vector<double> columnFrequencies(canvasHeight, 0);
@@ -110,9 +117,9 @@ public:
         double scalingFactor = 1.0 / (widthSamplesPerPixel * iterationsToShow);
         for (long int i = 0; i < canvasWidth; i++) {
             if (needsToRecalculate) {
+                std::cout << "cancelled calculation of logistic map\n";
                 break;
             }
-            // TODO: make this async
             double pixelR = rLowerBound + rPixelStep * i;
             auto &currentFrequencies = frequencies.at(i);
             auto &currentMaxFrequency = maxFrequencies.at(i);
@@ -224,11 +231,17 @@ public:
                         }
                     }
                 }
+                rValuesCalculated++;
             }
         }
         this->frequencies = frequencies;
         this->maxFrequencies = maxFrequencies;
+        if (needsToRecalculate) {
+            needsToRecalculate = false;
+            calculateLogisticMap(canvasWidth, canvasHeight);
+        }
         std::cout << "calculated logistic map\n";
+        currentlyCalculating = false;
     }
 
     void drawLogisticMap(emscripten::val canvas) {
@@ -295,34 +308,58 @@ public:
     }
 };
 
-void ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
+bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
     static auto logisticMap = LogisticMap();
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
+    auto canvasWidth = canvas["clientWidth"].as<int>();
+    auto canvasHeight = canvas["clientHeight"].as<int>();
+    auto progress = document.call<emscripten::val>("getElementById", emscripten::val("progress-logistic-map"));
+    auto progressbar = document.call<emscripten::val>("getElementById", emscripten::val("progressbar-logistic-map"));
+    auto progressLabel = document.call<emscripten::val>("getElementById", emscripten::val("label-progressbar-logistic-map"));
+    int numRValues = canvasWidth * (2 * logisticMap.extraSymmetricalSamplesPerPixel + 1) - 2 * logisticMap.extraSymmetricalSamplesPerPixel;
+    // we subtract 2 * logisticMap.extraSymmetricalSamplesPerPixel because of the subpixel edges that go off the
+    // centers of the edge pixels of the map, which we don't calculate
+    std::array<bool, 3> finishValues = {false, false, false};
     if (resizeLogisticMap) {
-        auto canvasWidth = canvas["clientWidth"].as<int>();
-        auto canvasHeight = canvas["clientHeight"].as<int>();
-        std::thread calculations(&LogisticMap::calculateLogisticMap, logisticMap, canvasWidth, canvasHeight);
-        calculations.detach();
+        progress.set("max", emscripten::val(numRValues));
+        finishValues.at(0) = true;
+    }
+    if (calculateLogisticMap) {
+        // logisticMap.calculateLogisticMap(canvasWidth, canvasHeight);
+        if (logisticMap.currentlyCalculating) {
+            logisticMap.needsToRecalculate = true;
+        } else {
+            logisticMap.currentlyCalculating = true;
+            // technically redundant since calculateLogisticMap will also set currentlyCalculating to true, but starting
+            // the thread is slower so we will manually set this to be true in time for the renderLogisticMap logic
+            std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap, canvasWidth, canvasHeight);
+            calculations.detach();
+            progressbar["style"].set("visibility", emscripten::val("visible"));
+            finishValues.at(1) = true;
+        }
     }
     if (renderLogisticMap) {
-        //logisticMap.drawLogisticMap(canvas);
+        int rValuesCalculated = logisticMap.rValuesCalculated;
+        if (logisticMap.currentlyCalculating) {
+            progress.set("value", emscripten::val(rValuesCalculated));
+            std::string rValuesCalculatedString = "Rendering Logistic Map: " + std::to_string(rValuesCalculated) + "/" + std::to_string(numRValues);
+            progressLabel.set("innerHTML", emscripten::val(rValuesCalculatedString));
+        } else {
+            progressbar["style"].set("visibility", emscripten::val("hidden"));
+            logisticMap.drawLogisticMap(canvas);
+            finishValues.at(2) = true;
+        }
     }
+    return finishValues.at(0) && resizeLogisticMap || finishValues.at(1) && calculateLogisticMap || finishValues.at(2) && renderLogisticMap;
 }
 
 void RenderLogisticMap(double DOMHighResTimeStamp) {
-    ManipulateLogisticMap(false, false, true);
+    bool manipulationWasFinished = ManipulateLogisticMap(false, false, true);
     emscripten::val window = emscripten::val::global("window");
-    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
-    /*
-    if (needsToRecalculate) {
-        needsToRecalculate = false;
-        // hmm, could this cause a memory leak if the user keeps on changing values before the function can complete?
-        calculateLogisticMap(canvasWidth, canvasHeight);
-    } else {
-        drawLogisticMap(canvas);
+    if (!manipulationWasFinished) {
+        window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
     }
-     */
 }
 
 void RenderPlot(double DOMHighResTimeStamp)
