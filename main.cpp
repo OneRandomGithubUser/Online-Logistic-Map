@@ -336,8 +336,8 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
             std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap, canvasWidth, canvasHeight);
             calculations.detach();
             progressbar["style"].set("visibility", emscripten::val("visible"));
-            finishValues.at(1) = true;
         }
+        finishValues.at(1) = true;
     }
     if (renderLogisticMap) {
         int rValuesCalculated = logisticMap.rValuesCalculated;
@@ -373,8 +373,12 @@ void RenderPlot(double DOMHighResTimeStamp)
 void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten::val array)
 {
     emscripten::val window = emscripten::val::global("window");
-    canvas.set("width", emscripten::val(window["innerWidth"].as<double>() / 2.0 - 1));
-    canvas.set("height", emscripten::val(window["innerHeight"].as<double>() - 100 - 1));
+    emscripten::val boundingBox = canvas["parentElement"].call<emscripten::val>("getBoundingClientRect");
+    // This bounding box has parameters that are not limited to being an integer, as opposed to directly calling the width and height of the parent div
+    // If the div is not an integer, the extra subpixel should be covered by the border of the div
+    // subtract 2 to account for the border of at least 1 px
+    canvas.set("width", emscripten::val(std::ceil(boundingBox["width"].as<double>() - 2)));
+    canvas.set("height", emscripten::val(std::ceil(boundingBox["height"].as<double>() - 2)));
     emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
     ctx.set("textAlign", emscripten::val("center"));
     ctx.set("textBaseline", emscripten::val("middle"));
