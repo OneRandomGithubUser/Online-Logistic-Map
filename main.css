@@ -20,6 +20,7 @@ body
 }
 .canvas
 {
+    position: absolute;
     cursor: crosshair;
 }
 .right
@@ -69,13 +70,18 @@ body
 }
 #canvas-logistic-map
 {
-    position: absolute;
+    z-index: 0;
+}
+#canvas-logistic-map-overlay
+{
+    z-index: 1;
 }
 #ui-panel
 {
     bottom: 0;
     top: calc(100% - 100px);
-    width: 100%;
+    left: 0;
+    right: 0;
     border-width: 1px 2px 2px 2px;
 }
 #x-input
