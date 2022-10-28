@@ -57,6 +57,7 @@ public:
     bool logarithmicShadingEnabled; // alternative is linear shading
     bool sonificationApplyFourierTransform;
     int rawAudioSampleRateFactor;
+    const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
     std::array<unsigned char, 4> maxLogisticMapRGBA;
     std::array<unsigned char, 4> minLogisticMapRGBA;
@@ -73,6 +74,7 @@ public:
     int calculationStage;
 
 private:
+    std::array<double, 2> currentMouseCoordinates;
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
@@ -83,6 +85,10 @@ private:
     }
 
 public:
+    void set_current_mouse_coordinates (double x, double y) {
+        currentMouseCoordinates.at(0) = x;
+        currentMouseCoordinates.at(1) = y;
+    }
     LogisticMap() {
         iterationsToSteadyState = 1000;
         iterationsToShow = 2000;
@@ -114,6 +120,8 @@ public:
         currentlyCalculating = false;
         rValuesCalculated = 0;
         calculationStage = 0;
+        currentMouseCoordinates.at(0) = 0;
+        currentMouseCoordinates.at(1) = 0;
     }
     void calculateLogisticMap(int canvasWidth, int canvasHeight) {
         std::cout << "calculating logistic map\n";
@@ -372,7 +380,10 @@ public:
                                                                                          rawAudioSampleRateFactor),
                                                                          audioCtx["sampleRate"]);
             emscripten::val channelData = audioBuffer.call<emscripten::val>("getChannelData", emscripten::val(0));
-            auto &currentAudioData = audioData.at(969);
+            int x = currentMouseCoordinates.at(0);
+            if (x < 0) {x = 0;}
+            if (x > audioData.at(0).size()) {x = audioData.at(0).size();}
+            auto &currentAudioData = audioData.at(x);
             for (int i = 0; i < currentAudioData.size(); i++) {
                 // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
                 auto &currentAudioDataPoint = currentAudioData.at(i);
@@ -390,8 +401,13 @@ public:
     }
 };
 
-bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap, bool sonifyLogisticMap) {
+LogisticMap& GetLogisticMap() {
     static auto logisticMap = LogisticMap();
+    return logisticMap;
+}
+
+bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap, bool sonifyLogisticMap) {
+    auto& logisticMap = GetLogisticMap();
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
     auto canvasWidth = canvas["clientWidth"].as<int>();
@@ -425,7 +441,7 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
         int rValuesCalculated = logisticMap.rValuesCalculated;
         if (logisticMap.currentlyCalculating) {
             progress.set("value", emscripten::val(rValuesCalculated));
-            std::string rValuesCalculatedString = "Rendering Logistic Map: " + std::to_string(rValuesCalculated) + "/" + std::to_string(numRValues);
+            std::string rValuesCalculatedString = "Rendering Logistic Map:\nStage " + std::to_string(logisticMap.calculationStage) + "/" + std::to_string(logisticMap.maxCalculationStage) + "\nrValue " + std::to_string(logisticMap.rValuesCalculated) + "/" + std::to_string(numRValues);
             progressLabel.set("innerHTML", emscripten::val(rValuesCalculatedString));
         } else {
             progressbar["style"].set("visibility", emscripten::val("hidden"));
@@ -439,6 +455,14 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
         }
     }
     return finishValues.at(0) && resizeLogisticMap || finishValues.at(1) && calculateLogisticMap || finishValues.at(2) && renderLogisticMap;
+}
+
+void RenderLogisticMapOverlay(double DOMHighResTimeStamp) {
+    bool manipulationWasFinished = ManipulateLogisticMap(false, false, true, true);
+    emscripten::val window = emscripten::val::global("window");
+    if (!manipulationWasFinished) {
+        window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
+    }
 }
 
 void RenderLogisticMap(double DOMHighResTimeStamp) {
@@ -472,6 +496,18 @@ void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten:
     ctx.set("font", emscripten::val("20px Arial"));
 }
 
+void InteractWithLogisticMapCanvas(emscripten::val event)
+{
+    auto& logisticMap = GetLogisticMap();
+    emscripten::val window = emscripten::val::global("window");
+    double offsetX = event["offsetX"].as<double>();
+    double offsetY = event["offsetY"].as<double>();
+    logisticMap.set_current_mouse_coordinates(offsetX, offsetY);
+    // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
+    // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
+    ManipulateLogisticMap(false, false, false, true);
+}
+
 void InitializeCanvases(emscripten::val event)
 {
     emscripten::val document = emscripten::val::global("document");
@@ -480,13 +516,10 @@ void InitializeCanvases(emscripten::val event)
     ManipulateLogisticMap(true, true, false, false);
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
-}
-
-void InteractWithCanvas(emscripten::val event)
-{
-    emscripten::val window = emscripten::val::global("window");
-    // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
-    // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
+    auto logisticMapCanvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
+    logisticMapCanvas.call<void>("addEventListener", emscripten::val("mousedown"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
+    logisticMapCanvas.call<void>("addEventListener", emscripten::val("mouseup"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
+    logisticMapCanvas.call<void>("addEventListener", emscripten::val("mousemove"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
 }
 
 void InitializeAllSettings()
@@ -517,4 +550,5 @@ EMSCRIPTEN_BINDINGS(bindings)\
   emscripten::function("InitializeCanvas", InitializeCanvas);\
   emscripten::function("RenderLogisticMap", RenderLogisticMap);\
   emscripten::function("RenderPlot", RenderPlot);\
+  emscripten::function("InteractWithLogisticMapCanvas", InteractWithLogisticMapCanvas);\
 };
