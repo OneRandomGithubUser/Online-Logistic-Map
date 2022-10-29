@@ -63,9 +63,8 @@ public:
     std::array<unsigned char, 4> backgroundRGBA;
     std::array<unsigned char, 4> maxLogisticMapRGBA;
     std::array<unsigned char, 4> minLogisticMapRGBA;
-    std::optional<emscripten::val> audioCtxWrapper;
-    std::optional<emscripten::val> AudioBufferSourceNode;
-    // requires std::optional wrappers because these are only permitted to be created after the first user interaction
+    int widthSamplesPerPixel;
+    int numRValues;
 
     // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
     // through the UI. It is read only by CalculateLogisticMap.
@@ -80,12 +79,20 @@ public:
     int calculationStage;
 
 private:
+    int canvasWidth;
+    int canvasHeight;
     std::array<double, 2> currentMouseCoordinates;
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
     std::vector<std::vector<float>> audioData;
     std::vector<double> maxFrequencies;
+    std::optional<emscripten::val> audioCtxWrapper;
+    std::vector<std::optional<emscripten::val>> gainNodes;
+    // requires std::optional wrappers because these are only permitted to be created after the first user interaction
+    bool isCurrentlyPlaying;
+    int currentlyPlayingXCoord;
+
     double LogisticFunction(double r, double input) {
         return r * input * (1 - input);
     }
@@ -122,14 +129,35 @@ public:
         minLogisticMapRGBA.at(1) = 0;
         minLogisticMapRGBA.at(2) = 0;
         minLogisticMapRGBA.at(3) = 0;
+        widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
+        numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
         needsToRecalculate = false;
         currentlyCalculating = false;
         rValuesCalculated = 0;
         calculationStage = 0;
         currentMouseCoordinates.at(0) = 0;
         currentMouseCoordinates.at(1) = 0;
+        canvasWidth = 0;
+        canvasHeight = 0;
+        isCurrentlyPlaying = false;
+        currentlyPlayingXCoord = 0;
     }
-    void calculateLogisticMap(int canvasWidth, int canvasHeight) {
+    void resizeLogisticMap(int newCanvasWidth, int newCanvasHeight) {
+        maxFrequencies.resize(newCanvasWidth, 0);
+        std::vector<double> columnFrequencies(newCanvasHeight, 0);
+        frequencies.resize(newCanvasWidth, columnFrequencies);
+        if (newCanvasHeight != canvasHeight) {
+            for (auto& currentColumnFrequencyColumn : frequencies) {
+                currentColumnFrequencyColumn.resize(newCanvasHeight, 0);
+            }
+        }
+        std::vector<double> columnDataPoints(iterationsToShow, 0);
+        dataPoints.resize(newCanvasWidth, columnDataPoints);
+        gainNodes.resize(newCanvasWidth);
+        canvasWidth = newCanvasWidth;
+        canvasHeight = newCanvasHeight;
+    }
+    void calculateLogisticMap() {
         std::cout << "calculating logistic map\n";
         currentlyCalculating = true;
         rValuesCalculated = 0;
@@ -137,12 +165,6 @@ public:
         {
             // calculationStage 1: do the actual calculations
             double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
-            int widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
-            std::vector<double> columnFrequencies(canvasHeight, 0);
-            std::vector<double> maxFrequencies(canvasWidth, 0);
-            std::vector<std::vector<double>> frequencies(canvasWidth, columnFrequencies);
-            std::vector<double> columnDataPoints(iterationsToShow, 0);
-            std::vector<std::vector<double>> dataPoints(canvasWidth, columnDataPoints);
             double scalingFactor = 1.0 / (widthSamplesPerPixel * iterationsToShow);
             for (long int i = 0; i < canvasWidth; i++) {
                 if (needsToRecalculate) {
@@ -275,11 +297,7 @@ public:
             }
             if (needsToRecalculate) {
                 needsToRecalculate = false;
-                calculateLogisticMap(canvasWidth, canvasHeight);
-            } else {
-                this->frequencies = std::move(frequencies);
-                this->maxFrequencies = std::move(maxFrequencies);
-                this->dataPoints = std::move(dataPoints);
+                calculateLogisticMap();
             }
         }
         rValuesCalculated = 0;
@@ -349,7 +367,7 @@ public:
             }
             if (needsToRecalculate) {
                 needsToRecalculate = false;
-                calculateLogisticMap(canvasWidth, canvasHeight);
+                calculateLogisticMap();
             } else {
                 this->imageData = std::move(imageData);
                 this->audioData = std::move(audioData);
@@ -366,12 +384,12 @@ public:
 
         std::cout << "drawing logistic map\n";
         // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
-        auto data2 = emscripten::val(imageData);
+        auto imageDataJsArray = emscripten::val(imageData);
         auto Uint8ClampedArray = emscripten::val::global("Uint8ClampedArray");
-        auto data4 = Uint8ClampedArray.new_(data2);
+        auto imageDataJsUint8ClampedArray = Uint8ClampedArray.new_(imageDataJsArray);
         auto ImageData = emscripten::val::global("ImageData");
-        auto data6 = ImageData.new_(data4, canvas["clientWidth"], canvas["clientHeight"]);
-        ctx.call<void>("putImageData", data6, emscripten::val(0), emscripten::val(0));
+        auto imageDataJsObject = ImageData.new_(imageDataJsUint8ClampedArray, canvas["clientWidth"], canvas["clientHeight"]);
+        ctx.call<void>("putImageData", imageDataJsObject, emscripten::val(0), emscripten::val(0));
         std::cout << "drew logistic map\n";
     }
 
@@ -380,47 +398,55 @@ public:
             emscripten::val AudioContext = emscripten::val::global("AudioContext");
             audioCtxWrapper = AudioContext.new_();
         }
-        if (AudioBufferSourceNode.has_value()) {
-            auto& bufferSource = AudioBufferSourceNode.value();
-            bufferSource.call<void>("disconnect");
+        if (isCurrentlyPlaying) {
+            auto& currentGainNode = gainNodes.at(currentlyPlayingXCoord).value();
+            currentGainNode["gain"].set("value", emscripten::val(0));
         }
-        // TODO: precompute all of these into a vector of AudioBufferSourceNode to reduce calculation time and avoid the problem of having to cancel the function mid-calculation
         auto& audioCtx = audioCtxWrapper.value();
-        emscripten::val audioBuffer;
-        if (sonificationApplyFourierTransform) {
-            // TODO
+        int x = currentMouseCoordinates.at(0);
+        if (x < 0) {x = 0;}
+        if (x > canvasWidth) {x = canvasWidth;}
+        isCurrentlyPlaying = true;
+        currentlyPlayingXCoord = x;
+        auto& currentGainNodeWrapper = gainNodes.at(x);
+        if (currentGainNodeWrapper.has_value()) {
+            auto& currentGainNode = currentGainNodeWrapper.value();
+            currentGainNode["gain"].set("value", emscripten::val(1));
         } else {
-            audioBuffer = audioCtx.call<emscripten::val>("createBuffer", emscripten::val(1),
-                                                                         emscripten::val(iterationsToShow *
-                                                                                         rawAudioSampleRateFactor),
-                                                                         audioCtx["sampleRate"]);
+            auto audioBuffer = audioCtx.call<emscripten::val>("createBuffer", emscripten::val(1),
+                                                              emscripten::val(iterationsToShow *
+                                                                              rawAudioSampleRateFactor),
+                                                              audioCtx["sampleRate"]);
             emscripten::val channelData = audioBuffer.call<emscripten::val>("getChannelData", emscripten::val(0));
-            int x = currentMouseCoordinates.at(0);
-            if (x < 0) {x = 0;}
-            if (x > audioData.at(0).size()) {x = audioData.at(0).size();}
-            // TODO: make this less hacky than using audioData.at(0)
             auto &currentAudioData = audioData.at(x);
+            if (sonificationApplyFourierTransform) {
+                // TODO: apply Fast Fourier Transform to currentAudioData
+            }
             for (int i = 0; i < currentAudioData.size(); i++) {
+                auto currentAudioDataPoint = currentAudioData.at(i);
                 // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
-                auto &currentAudioDataPoint = currentAudioData.at(i);
                 for (int j = 0; j < rawAudioSampleRateFactor; j++) {
                     channelData.set(std::to_string(rawAudioSampleRateFactor * i + j),
                                     emscripten::val(currentAudioDataPoint));
                 }
             }
+            auto currentAudioBuffer = audioCtx.call<emscripten::val>("createBufferSource");
+            currentAudioBuffer.set("loop", emscripten::val(true));
+            currentAudioBuffer.set("buffer", audioBuffer);
+            emscripten::val GainNode = emscripten::val::global("GainNode");
+            gainNodes.at(x) = GainNode.new_(audioCtx);
+            auto& gainNode = gainNodes.at(x).value();
+            currentAudioBuffer.call<void>("start");
+            currentAudioBuffer.call<void>("connect", gainNode);
+            gainNode.call<void>("connect", audioCtx["destination"]);
         }
-        emscripten::val bufferSource = audioCtx.call<emscripten::val>("createBufferSource");
-        bufferSource.set("loop", emscripten::val(true));
-        bufferSource.set("buffer", audioBuffer);
-        bufferSource.call<void>("connect", audioCtx["destination"]);
-        bufferSource.call<void>("start");
-        AudioBufferSourceNode = bufferSource;
     }
 
     void desonifyLogisticMap() {
-        if (AudioBufferSourceNode.has_value()) {
-            auto& bufferSource = AudioBufferSourceNode.value();
-            bufferSource.call<void>("stop");
+        if (isCurrentlyPlaying) {
+            auto& currentGainNode = gainNodes.at(currentlyPlayingXCoord).value();
+            currentGainNode["gain"].set("value", emscripten::val(0));
+            isCurrentlyPlaying = false;
         }
     }
 };
@@ -434,28 +460,28 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
     auto& logisticMap = GetLogisticMap();
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
-    auto canvasWidth = canvas["clientWidth"].as<int>();
-    auto canvasHeight = canvas["clientHeight"].as<int>();
     auto progress = document.call<emscripten::val>("getElementById", emscripten::val("progress-logistic-map"));
     auto progressbar = document.call<emscripten::val>("getElementById", emscripten::val("progressbar-logistic-map"));
     auto progressLabel = document.call<emscripten::val>("getElementById", emscripten::val("label-progressbar-logistic-map"));
-    int numRValues = canvasWidth * (2 * logisticMap.extraSymmetricalSamplesPerPixel + 1) - 2 * logisticMap.extraSymmetricalSamplesPerPixel;
+    int numRValues = logisticMap.numRValues;
     // we subtract 2 * logisticMap.extraSymmetricalSamplesPerPixel because of the subpixel edges that go off the
     // centers of the edge pixels of the map, which we don't calculate
     std::array<bool, 4> finishValues = {false, false, false, false};
     if (resizeLogisticMap) {
         progress.set("max", emscripten::val(numRValues));
+        auto canvasWidth = canvas["clientWidth"].as<int>();
+        auto canvasHeight = canvas["clientHeight"].as<int>();
+        logisticMap.resizeLogisticMap(canvasWidth, canvasHeight);
         finishValues.at(0) = true;
     }
     if (calculateLogisticMap) {
-        // logisticMap.calculateLogisticMap(canvasWidth, canvasHeight);
         if (logisticMap.currentlyCalculating) {
             logisticMap.needsToRecalculate = true;
         } else {
             logisticMap.currentlyCalculating = true;
             // technically redundant since calculateLogisticMap will also set currentlyCalculating to true, but starting
             // the thread is slower so we will manually set this to be true in time for the renderLogisticMap logic
-            std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap, canvasWidth, canvasHeight);
+            std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap);
             calculations.detach();
             progressbar["style"].set("visibility", emscripten::val("visible"));
         }
@@ -539,7 +565,6 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
             double offsetX = event["offsetX"].as<double>();
             double offsetY = event["offsetY"].as<double>();
             logisticMap.set_current_mouse_coordinates(offsetX, offsetY);
-            ManipulateLogisticMap(false, false, false);
             if (!logisticMap.currentlyCalculating && mouseIsDown) {
                 logisticMap.sonifyLogisticMap();
             }
