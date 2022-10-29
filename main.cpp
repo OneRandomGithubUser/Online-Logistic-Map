@@ -152,10 +152,15 @@ public:
             }
         }
         std::vector<double> columnDataPoints(iterationsToShow, 0);
+        imageData.resize(newCanvasWidth * newCanvasHeight * 4, 0);
+        // TODO: replace rawAudioSampleRateFactor when FFT support is added
+        std::vector<float> columnAudioData(iterationsToShow * rawAudioSampleRateFactor, 0.0);
+        audioData.resize(newCanvasWidth, columnAudioData);
         dataPoints.resize(newCanvasWidth, columnDataPoints);
         gainNodes.resize(newCanvasWidth);
         canvasWidth = newCanvasWidth;
         canvasHeight = newCanvasHeight;
+        numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
     }
     void calculateLogisticMap() {
         std::cout << "calculating logistic map\n";
@@ -308,9 +313,6 @@ public:
             for (int i = 0; i < 4; i++) {
                 rangeRGBA[i] = maxLogisticMapRGBA[i] - minLogisticMapRGBA[i];
             }
-            std::vector<unsigned char> imageData(canvasWidth * canvasHeight * 4, 0);
-            std::vector<float> columnAudioData(iterationsToShow, 0.0);
-            std::vector<std::vector<float>> audioData(canvasWidth, columnAudioData);
             double cutoffFrequency = std::exp(-logScalingFactor);
             for (long int i = 0; i < canvasWidth; i++) {
                 if (needsToRecalculate) {
@@ -331,8 +333,8 @@ public:
                 for (int j = 0; j < canvasHeight; j++) {
                     double currentFrequency = currentFrequencies.at(j);
                     if (currentFrequency == 0) {
-                        for (int i = 0; i < 4; i++) {
-                            imageData.at(pixelIndex + i) = backgroundRGBA[i];
+                        for (int k = 0; k < 4; k++) {
+                            imageData.at(pixelIndex + k) = backgroundRGBA[k];
                         }
                     } else {
                         double clampedPixelScalingFactor;
@@ -357,20 +359,24 @@ public:
                     pixelIndex -= canvasWidth * 4;
                 }
                 if (sonificationApplyFourierTransform) {
-                    // TODO
+                    // TODO: apply Fast Fourier Transform
                 } else {
                     auto& currentDataPoints = dataPoints.at(i);
-                    std::vector<float> currentAudioData(currentDataPoints.begin(), currentDataPoints.end());
-                    audioData.at(i) = std::move(currentAudioData);
+                    auto& currentAudioData = audioData.at(i);
+                    for (int j = 0; j < currentDataPoints.size(); j++) {
+                        // currentDataPoints ranges from [0, 1] but currentAudioDataPoint ranges from [-1, 1]
+                        float currentAudioDataPoint = currentDataPoints.at(j) * 2 - 1;
+                        // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
+                        for (int k = 0; k < rawAudioSampleRateFactor; k++) {
+                            currentAudioData.at(j * rawAudioSampleRateFactor + k) = currentAudioDataPoint;
+                        }
+                    }
                 }
                 rValuesCalculated++;
             }
             if (needsToRecalculate) {
                 needsToRecalculate = false;
                 calculateLogisticMap();
-            } else {
-                this->imageData = std::move(imageData);
-                this->audioData = std::move(audioData);
             }
         }
         std::cout << "calculated logistic map\n";
@@ -417,27 +423,18 @@ public:
                                                               emscripten::val(iterationsToShow *
                                                                               rawAudioSampleRateFactor),
                                                               audioCtx["sampleRate"]);
-            emscripten::val channelData = audioBuffer.call<emscripten::val>("getChannelData", emscripten::val(0));
-            auto &currentAudioData = audioData.at(x);
-            if (sonificationApplyFourierTransform) {
-                // TODO: apply Fast Fourier Transform to currentAudioData
-            }
-            for (int i = 0; i < currentAudioData.size(); i++) {
-                auto currentAudioDataPoint = currentAudioData.at(i);
-                // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
-                for (int j = 0; j < rawAudioSampleRateFactor; j++) {
-                    channelData.set(std::to_string(rawAudioSampleRateFactor * i + j),
-                                    emscripten::val(currentAudioDataPoint));
-                }
-            }
-            auto currentAudioBuffer = audioCtx.call<emscripten::val>("createBufferSource");
-            currentAudioBuffer.set("loop", emscripten::val(true));
-            currentAudioBuffer.set("buffer", audioBuffer);
+            auto audioDataJsArray = emscripten::val(audioData.at(x));
+            auto Float32Array = emscripten::val::global("Float32Array");
+            auto audioDataJsFloat32Array = Float32Array.new_(audioDataJsArray);
+            audioBuffer.call<void>("copyToChannel", audioDataJsFloat32Array, emscripten::val(0));
+            auto bufferSourceNode = audioCtx.call<emscripten::val>("createBufferSource");
+            bufferSourceNode.set("loop", emscripten::val(true));
+            bufferSourceNode.set("buffer", audioBuffer);
             emscripten::val GainNode = emscripten::val::global("GainNode");
             gainNodes.at(x) = GainNode.new_(audioCtx);
             auto& gainNode = gainNodes.at(x).value();
-            currentAudioBuffer.call<void>("start");
-            currentAudioBuffer.call<void>("connect", gainNode);
+            bufferSourceNode.call<void>("start");
+            bufferSourceNode.call<void>("connect", gainNode);
             gainNode.call<void>("connect", audioCtx["destination"]);
         }
     }
