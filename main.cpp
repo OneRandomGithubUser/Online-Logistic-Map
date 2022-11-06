@@ -61,7 +61,7 @@ public:
     bool logarithmicShadingEnabled; // alternative is linear shading
     bool sonificationApplyInverseFourierTransform;
     int rawAudioSampleRateFactor;
-    int ifftAudioSampleRateFactor;
+    int ifftAudioSamples;
     const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
     std::array<unsigned char, 4> maxLogisticMapRGBA;
@@ -124,7 +124,7 @@ public:
         logarithmicShadingEnabled = true; // alternative is linear shading
         sonificationApplyInverseFourierTransform = true;
         rawAudioSampleRateFactor = 20;
-        ifftAudioSampleRateFactor = 20;
+        ifftAudioSamples = 40000;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
         backgroundRGBA.at(2) = 255;
@@ -168,8 +168,8 @@ public:
         resizeMatrix(plotData, newCanvasWidth, columnPlotData);
         std::vector<double> columnAudioData;
         if (sonificationApplyInverseFourierTransform) {
-            columnAudioData.resize(iterationsToShow * ifftAudioSampleRateFactor, 0.0);
-            fftwIO.resize(2 * iterationsToShow * ifftAudioSampleRateFactor, 0.0);
+            columnAudioData.resize(ifftAudioSamples, 0.0);
+            fftwIO.resize(2 * ifftAudioSamples, 0.0);
         } else {
             columnAudioData.resize(iterationsToShow * rawAudioSampleRateFactor, 0.0);
         }
@@ -218,6 +218,7 @@ public:
                 auto &nextFrequencies = frequencies.at(nextFrequenciesIndex);
                 auto &nextMaxFrequency = maxFrequencies.at(nextFrequenciesIndex);
                 auto& currentDataPoints = dataPoints.at(i);
+                auto& currentAudioData = audioData.at(i);
                 for (int j = -extraSymmetricalSamplesPerPixel; j <= extraSymmetricalSamplesPerPixel; j++) {
                     if (i == 0 && j < 0) { continue; } // don't go below the rLowerBound
                     if (i == canvasWidth - 1 && j > 0) { continue; } // don't go above the rUpperBound
@@ -226,15 +227,29 @@ public:
                     for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
                         currentValue = LogisticFunction(currentR, currentValue);
                     }
-                    bool measureSonification = (j == 0);
+                    bool currentSubpixelIsCentered = (j == 0);
                     for (int iteration = 0; iteration < iterationsToShow; iteration++) {
                         currentValue = LogisticFunction(currentR, currentValue);
-                        // sonification
-                        if (measureSonification) {
+                        if (currentSubpixelIsCentered) {
+                            // sonification
+                            if (sonificationApplyInverseFourierTransform) {
+                                // currentValue ranges from [0, 1] and currentValue * ifftAudioSamples ranges from [0, canvasHeight]
+                                int bucket = std::floor(currentValue * ifftAudioSamples);
+                                currentAudioData.at(bucket)++;
+                            } else {
+                                // currentValue ranges from [0, 1] but currentAudioDataPoint ranges from [-1, 1]
+                                double currentAudioDataPoint = currentValue * 2 - 1;
+                                // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
+                                for (int k = i * rawAudioSampleRateFactor; k < (i+1) * rawAudioSampleRateFactor; k++) {
+                                    currentAudioData.at(k) = currentAudioDataPoint;
+                                }
+                            }
+                            // plot
                             currentDataPoints.at(iteration) = currentValue;
                         }
                         // visualization
                         if (currentValue > xLowerBound && currentValue < xUpperBound) {
+                            // currentValue ranges from [0, 1] and subpixelHeight ranges from [0, canvasHeight]
                             double subpixelHeight =
                                     canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
                             if (antiAliasingEnabled) {
@@ -382,39 +397,31 @@ public:
                 }
                 if (sonificationApplyInverseFourierTransform) {
                     // TODO: apply Inverse Fast Fourier Transform
-                    auto currentDataPoints = dataPoints.at(i);
-                    currentDataPoints.resize(fftwIO.size(), 0.0);
-                    auto& currentAudioData = audioData.at(i);
-                    fftwIO = currentDataPoints;
-                    fftw_execute(fftwPlan);
-                    currentAudioData = fftwIO;
-                    if (i == 0) {
-                        for (int i = 0; i < currentDataPoints.size(); i++) {
-                            auto dataPoint = currentDataPoints[i];
+                    auto currentAudioData = audioData.at(i);
+                    currentAudioData.resize(fftwIO.size(), 0.0);
+                    fftwIO = currentAudioData;
+                    if (i == 1) {
+                        for (int i = 0; i < fftwIO.size(); i++) {
+                            auto dataPoint = fftwIO[i];
                             std::cout << "(" << i << ", " << dataPoint << "), ";
                         }
                         std::cout << "\n";
-                        for (int i = 0; i < currentAudioData.size(); i++) {
-                            auto audioData = currentAudioData[i];
+                    }
+                    fftw_execute(fftwPlan);
+                    if (i == 1) {
+                        for (int i = 0; i < fftwIO.size(); i++) {
+                            auto audioData = fftwIO[i];
+                            std::cout << "(" << i << ", " << audioData << "), ";
+                            /*
                             if (audioData < 0.001) {
                                 std::cout << "(" << i << ", " << 0 << "), ";
                             } else {
                                 std::cout << "(" << i << ", " << audioData << "), ";
-                            }
+                            }*/
                         }
                         std::cout << "\n";
                     }
-                } else {
-                    auto& currentDataPoints = dataPoints.at(i);
-                    auto& currentAudioData = audioData.at(i);
-                    for (int j = 0; j < currentDataPoints.size(); j++) {
-                        // currentDataPoints ranges from [0, 1] but currentAudioDataPoint ranges from [-1, 1]
-                        float currentAudioDataPoint = currentDataPoints.at(j) * 2 - 1;
-                        // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
-                        for (int k = 0; k < rawAudioSampleRateFactor; k++) {
-                            currentAudioData.at(j * rawAudioSampleRateFactor + k) = currentAudioDataPoint;
-                        }
-                    }
+                    audioData.at(i) = fftwIO;
                 }
                 iterationsCalculated++;
             }
