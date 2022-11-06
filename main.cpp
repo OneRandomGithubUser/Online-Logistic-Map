@@ -11,6 +11,8 @@
 #include <thread>
 #include <utility>
 #include <optional>
+#include <stdexcept>
+#include "fftw-3.3.10/api/fftw3.h"
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
 namespace emscripten {
@@ -57,7 +59,7 @@ public:
     double xUpperBound;
     bool antiAliasingEnabled;
     bool logarithmicShadingEnabled; // alternative is linear shading
-    bool sonificationApplyFourierTransform;
+    bool sonificationApplyInverseFourierTransform;
     int rawAudioSampleRateFactor;
     const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
@@ -85,13 +87,14 @@ private:
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
-    std::vector<std::vector<float>> audioData;
+    std::vector<std::vector<double>> audioData;
     std::vector<double> maxFrequencies;
     std::optional<emscripten::val> audioCtxWrapper;
     std::vector<std::optional<emscripten::val>> gainNodes;
     // requires std::optional wrappers because these are only permitted to be created after the first user interaction
     bool isCurrentlyPlaying;
     int currentlyPlayingXCoord;
+    fftw_plan fftwPlan;
 
     double LogisticFunction(double r, double input) {
         return r * input * (1 - input);
@@ -115,7 +118,7 @@ public:
         xUpperBound = 1;
         antiAliasingEnabled = true;
         logarithmicShadingEnabled = true; // alternative is linear shading
-        sonificationApplyFourierTransform = false;
+        sonificationApplyInverseFourierTransform = true;
         rawAudioSampleRateFactor = 20;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
@@ -143,6 +146,9 @@ public:
         currentlyPlayingXCoord = 0;
     }
     void resizeLogisticMap(int newCanvasWidth, int newCanvasHeight) {
+        if (newCanvasWidth <= 0 || newCanvasHeight <= 0) {
+            throw std::invalid_argument("resizeLogisticMap only accepts positive integers");
+        }
         maxFrequencies.resize(newCanvasWidth, 0);
         std::vector<double> columnFrequencies(newCanvasHeight, 0);
         frequencies.resize(newCanvasWidth, columnFrequencies);
@@ -154,10 +160,15 @@ public:
         std::vector<double> columnDataPoints(iterationsToShow, 0);
         imageData.resize(newCanvasWidth * newCanvasHeight * 4, 0);
         // TODO: replace rawAudioSampleRateFactor when FFT support is added
-        std::vector<float> columnAudioData(iterationsToShow * rawAudioSampleRateFactor, 0.0);
+        std::vector<double> columnAudioData(iterationsToShow * rawAudioSampleRateFactor, 0.0);
         audioData.resize(newCanvasWidth, columnAudioData);
         dataPoints.resize(newCanvasWidth, columnDataPoints);
         gainNodes.resize(newCanvasWidth);
+        auto exampleInput = dataPoints[0];
+        double* exampleInputArray = &exampleInput[0];
+        auto exampleOutput = audioData[0];
+        double* exampleOutputArray = &exampleOutput[0];
+        fftwPlan = fftw_plan_r2r_1d(columnAudioData.size(), exampleInputArray, exampleOutputArray, FFTW_R2HC, FFTW_ESTIMATE);
         canvasWidth = newCanvasWidth;
         canvasHeight = newCanvasHeight;
         numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
@@ -358,8 +369,23 @@ public:
                     }
                     pixelIndex -= canvasWidth * 4;
                 }
-                if (sonificationApplyFourierTransform) {
-                    // TODO: apply Fast Fourier Transform
+                if (sonificationApplyInverseFourierTransform) {
+                    // TODO: apply Inverse Fast Fourier Transform
+                    auto& currentDataPoints = dataPoints.at(i);
+                    double* currentDataPointsArray = &currentDataPoints[0];
+                    auto& currentAudioData = audioData.at(i);
+                    double* currentAudioDataArray = &currentAudioData[0];
+                    std::cout << fftw_alignment_of(currentDataPointsArray) << " " << fftw_alignment_of(currentAudioDataArray) << "\n";
+                    if (i == 0) {
+                        for (auto dataPoint: currentDataPoints) {
+                            std::cout << dataPoint << " ";
+                        }
+                        std::cout << "\n";
+                        for (auto audioData: currentAudioData) {
+                            std::cout << audioData << " ";
+                        }
+                        std::cout << "\n";
+                    }
                 } else {
                     auto& currentDataPoints = dataPoints.at(i);
                     auto& currentAudioData = audioData.at(i);
