@@ -61,6 +61,7 @@ public:
     bool logarithmicShadingEnabled; // alternative is linear shading
     bool sonificationApplyInverseFourierTransform;
     int rawAudioSampleRateFactor;
+    int ifftAudioSampleRateFactor;
     const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
     std::array<unsigned char, 4> maxLogisticMapRGBA;
@@ -77,7 +78,8 @@ public:
     bool needsToRecalculate;
 
     bool currentlyCalculating;
-    int rValuesCalculated;
+    int iterationsCalculated;
+    int numIterations;
     int calculationStage;
 
 private:
@@ -87,6 +89,8 @@ private:
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
+    std::vector<double> fftwIO;
+    std::vector<std::vector<double>> plotData;
     std::vector<std::vector<double>> audioData;
     std::vector<double> maxFrequencies;
     std::optional<emscripten::val> audioCtxWrapper;
@@ -120,6 +124,7 @@ public:
         logarithmicShadingEnabled = true; // alternative is linear shading
         sonificationApplyInverseFourierTransform = true;
         rawAudioSampleRateFactor = 20;
+        ifftAudioSampleRateFactor = 20;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
         backgroundRGBA.at(2) = 255;
@@ -136,7 +141,7 @@ public:
         numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
         needsToRecalculate = false;
         currentlyCalculating = false;
-        rValuesCalculated = 0;
+        iterationsCalculated = 0;
         calculationStage = 0;
         currentMouseCoordinates.at(0) = 0;
         currentMouseCoordinates.at(1) = 0;
@@ -145,30 +150,34 @@ public:
         isCurrentlyPlaying = false;
         currentlyPlayingXCoord = 0;
     }
+    void resizeMatrix(std::vector<std::vector<double>>& matrix, int numVectors, std::vector<double>& defaultVector) {
+        matrix.resize(numVectors, defaultVector);
+        std::fill(matrix.begin(), matrix.end(), defaultVector);
+    }
     void resizeLogisticMap(int newCanvasWidth, int newCanvasHeight) {
         if (newCanvasWidth <= 0 || newCanvasHeight <= 0) {
             throw std::invalid_argument("resizeLogisticMap only accepts positive integers");
         }
         maxFrequencies.resize(newCanvasWidth, 0);
         std::vector<double> columnFrequencies(newCanvasHeight, 0);
-        frequencies.resize(newCanvasWidth, columnFrequencies);
-        if (newCanvasHeight != canvasHeight) {
-            for (auto& currentColumnFrequencyColumn : frequencies) {
-                currentColumnFrequencyColumn.resize(newCanvasHeight, 0);
-            }
-        }
+        resizeMatrix(frequencies, newCanvasWidth, columnFrequencies);
         std::vector<double> columnDataPoints(iterationsToShow, 0);
+        resizeMatrix(dataPoints, newCanvasWidth, columnDataPoints);
         imageData.resize(newCanvasWidth * newCanvasHeight * 4, 0);
-        // TODO: replace rawAudioSampleRateFactor when FFT support is added
-        std::vector<double> columnAudioData(iterationsToShow * rawAudioSampleRateFactor, 0.0);
-        audioData.resize(newCanvasWidth, columnAudioData);
-        dataPoints.resize(newCanvasWidth, columnDataPoints);
+        std::vector<double> columnPlotData(newCanvasHeight, 0.0);
+        resizeMatrix(plotData, newCanvasWidth, columnPlotData);
+        std::vector<double> columnAudioData;
+        if (sonificationApplyInverseFourierTransform) {
+            columnAudioData.resize(iterationsToShow * ifftAudioSampleRateFactor, 0.0);
+            fftwIO.resize(2 * iterationsToShow * ifftAudioSampleRateFactor, 0.0);
+        } else {
+            columnAudioData.resize(iterationsToShow * rawAudioSampleRateFactor, 0.0);
+        }
+        resizeMatrix(audioData, newCanvasWidth, columnAudioData);
         gainNodes.resize(newCanvasWidth);
-        auto exampleInput = dataPoints[0];
-        double* exampleInputArray = &exampleInput[0];
-        auto exampleOutput = audioData[0];
-        double* exampleOutputArray = &exampleOutput[0];
-        fftwPlan = fftw_plan_r2r_1d(columnAudioData.size(), exampleInputArray, exampleOutputArray, FFTW_R2HC, FFTW_ESTIMATE);
+        auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE);
+        fftw_destroy_plan(fftwPlan);
+        fftwPlan = newFftwPlan;
         canvasWidth = newCanvasWidth;
         canvasHeight = newCanvasHeight;
         numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
@@ -176,7 +185,8 @@ public:
     void calculateLogisticMap() {
         std::cout << "calculating logistic map\n";
         currentlyCalculating = true;
-        rValuesCalculated = 0;
+        iterationsCalculated = 0;
+        numIterations = numRValues;
         calculationStage = 1;
         {
             // calculationStage 1: do the actual calculations
@@ -308,7 +318,7 @@ public:
                             }
                         }
                     }
-                    rValuesCalculated++;
+                    iterationsCalculated++;
                 }
             }
             if (needsToRecalculate) {
@@ -316,7 +326,8 @@ public:
                 calculateLogisticMap();
             }
         }
-        rValuesCalculated = 0;
+        iterationsCalculated = 0;
+        numIterations = canvasWidth;
         calculationStage++;
         {
             // calculationStage 2: convert the calculations into formats ready for sonification and visualization
@@ -371,18 +382,25 @@ public:
                 }
                 if (sonificationApplyInverseFourierTransform) {
                     // TODO: apply Inverse Fast Fourier Transform
-                    auto& currentDataPoints = dataPoints.at(i);
-                    double* currentDataPointsArray = &currentDataPoints[0];
+                    auto currentDataPoints = dataPoints.at(i);
+                    currentDataPoints.resize(fftwIO.size(), 0.0);
                     auto& currentAudioData = audioData.at(i);
-                    double* currentAudioDataArray = &currentAudioData[0];
-                    std::cout << fftw_alignment_of(currentDataPointsArray) << " " << fftw_alignment_of(currentAudioDataArray) << "\n";
+                    fftwIO = currentDataPoints;
+                    fftw_execute(fftwPlan);
+                    currentAudioData = fftwIO;
                     if (i == 0) {
-                        for (auto dataPoint: currentDataPoints) {
-                            std::cout << dataPoint << " ";
+                        for (int i = 0; i < currentDataPoints.size(); i++) {
+                            auto dataPoint = currentDataPoints[i];
+                            std::cout << "(" << i << ", " << dataPoint << "), ";
                         }
                         std::cout << "\n";
-                        for (auto audioData: currentAudioData) {
-                            std::cout << audioData << " ";
+                        for (int i = 0; i < currentAudioData.size(); i++) {
+                            auto audioData = currentAudioData[i];
+                            if (audioData < 0.001) {
+                                std::cout << "(" << i << ", " << 0 << "), ";
+                            } else {
+                                std::cout << "(" << i << ", " << audioData << "), ";
+                            }
                         }
                         std::cout << "\n";
                     }
@@ -398,7 +416,7 @@ public:
                         }
                     }
                 }
-                rValuesCalculated++;
+                iterationsCalculated++;
             }
             if (needsToRecalculate) {
                 needsToRecalculate = false;
@@ -486,12 +504,10 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
     auto progress = document.call<emscripten::val>("getElementById", emscripten::val("progress-logistic-map"));
     auto progressbar = document.call<emscripten::val>("getElementById", emscripten::val("progressbar-logistic-map"));
     auto progressLabel = document.call<emscripten::val>("getElementById", emscripten::val("label-progressbar-logistic-map"));
-    int numRValues = logisticMap.numRValues;
     // we subtract 2 * logisticMap.extraSymmetricalSamplesPerPixel because of the subpixel edges that go off the
     // centers of the edge pixels of the map, which we don't calculate
     std::array<bool, 4> finishValues = {false, false, false, false};
     if (resizeLogisticMap) {
-        progress.set("max", emscripten::val(numRValues));
         auto canvasWidth = canvas["clientWidth"].as<int>();
         auto canvasHeight = canvas["clientHeight"].as<int>();
         logisticMap.resizeLogisticMap(canvasWidth, canvasHeight);
@@ -511,11 +527,13 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
         finishValues.at(1) = true;
     }
     if (renderLogisticMap) {
-        int rValuesCalculated = logisticMap.rValuesCalculated;
         if (logisticMap.currentlyCalculating) {
-            progress.set("value", emscripten::val(rValuesCalculated));
-            std::string rValuesCalculatedString = "Rendering Logistic Map:\nStage " + std::to_string(logisticMap.calculationStage) + "/" + std::to_string(logisticMap.maxCalculationStage) + "\nrValue " + std::to_string(logisticMap.rValuesCalculated) + "/" + std::to_string(numRValues);
-            progressLabel.set("innerHTML", emscripten::val(rValuesCalculatedString));
+            progress.set("value", emscripten::val(logisticMap.iterationsCalculated));
+            progress.set("max", emscripten::val(logisticMap.numIterations));
+            std::string calculationStageString = std::to_string(logisticMap.calculationStage) + "/" + std::to_string(logisticMap.maxCalculationStage);
+            std::string iterationsCalculatedString = std::to_string(logisticMap.iterationsCalculated) + "/" + std::to_string(logisticMap.numIterations);
+            std::string progressString = "Rendering Logistic Map:\nStage " + calculationStageString + "\nrValue " + iterationsCalculatedString;
+            progressLabel.set("innerHTML", emscripten::val(progressString));
         } else {
             progressbar["style"].set("visibility", emscripten::val("hidden"));
             logisticMap.drawLogisticMap(canvas);
