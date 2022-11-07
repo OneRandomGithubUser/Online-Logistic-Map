@@ -61,7 +61,10 @@ public:
     bool logarithmicShadingEnabled; // alternative is linear shading
     bool sonificationApplyInverseFourierTransform;
     int rawAudioSampleRateFactor;
+    double ifftMinFrequency;
+    double ifftMaxFrequency;
     int ifftAudioSamples;
+    // ifftAudioSamples cannot be less than twice ifftMaxFrequency
     const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
     std::array<unsigned char, 4> maxLogisticMapRGBA;
@@ -124,7 +127,9 @@ public:
         logarithmicShadingEnabled = true; // alternative is linear shading
         sonificationApplyInverseFourierTransform = true;
         rawAudioSampleRateFactor = 20;
-        ifftAudioSamples = 40000;
+        ifftMinFrequency = 0;
+        ifftMaxFrequency = 2500;
+        ifftAudioSamples = 10000;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
         backgroundRGBA.at(2) = 255;
@@ -219,6 +224,8 @@ public:
                 auto &nextMaxFrequency = maxFrequencies.at(nextFrequenciesIndex);
                 auto& currentDataPoints = dataPoints.at(i);
                 auto& currentAudioData = audioData.at(i);
+                double audioDataIncrement = 0.5 / iterationsToShow;
+                // this is half of the inverse of iterationsToShow since the IFFT is doubled
                 for (int j = -extraSymmetricalSamplesPerPixel; j <= extraSymmetricalSamplesPerPixel; j++) {
                     if (i == 0 && j < 0) { continue; } // don't go below the rLowerBound
                     if (i == canvasWidth - 1 && j > 0) { continue; } // don't go above the rUpperBound
@@ -233,9 +240,12 @@ public:
                         if (currentSubpixelIsCentered) {
                             // sonification
                             if (sonificationApplyInverseFourierTransform) {
-                                // currentValue ranges from [0, 1] and currentValue * ifftAudioSamples ranges from [0, canvasHeight]
-                                int bucket = std::floor(currentValue * ifftAudioSamples);
-                                currentAudioData.at(bucket)++;
+                                // currentValue ranges from [0, 1]
+                                // bucket ranges from [0, ifftMaxFrequency - ifftMinFrequency]
+                                // audioDataIndex ranges from [ifftMinFrequency, ifftMaxFrequency]
+                                double bucket = currentValue * (ifftMaxFrequency - ifftMinFrequency);
+                                int audioDataIndex = std::floor(bucket + ifftMinFrequency);
+                                currentAudioData.at(audioDataIndex) += audioDataIncrement;
                             } else {
                                 // currentValue ranges from [0, 1] but currentAudioDataPoint ranges from [-1, 1]
                                 double currentAudioDataPoint = currentValue * 2 - 1;
@@ -398,26 +408,26 @@ public:
                 if (sonificationApplyInverseFourierTransform) {
                     // TODO: apply Inverse Fast Fourier Transform
                     auto currentAudioData = audioData.at(i);
+                    // fftwIO is in halfcomplex format and currentAudioData has just the real components
+                    // we want the imaginary parts to be 0 (for now at least)
                     currentAudioData.resize(fftwIO.size(), 0.0);
                     fftwIO = currentAudioData;
-                    if (i == 1) {
+                    if (i == 970) {
                         for (int i = 0; i < fftwIO.size(); i++) {
                             auto dataPoint = fftwIO[i];
-                            std::cout << "(" << i << ", " << dataPoint << "), ";
+                            if (dataPoint != 0) {
+                                std::cout << "(" << i << ", " << dataPoint << "), ";
+                            }
                         }
                         std::cout << "\n";
                     }
                     fftw_execute(fftwPlan);
-                    if (i == 1) {
+                    if (i == 970) {
                         for (int i = 0; i < fftwIO.size(); i++) {
                             auto audioData = fftwIO[i];
-                            std::cout << "(" << i << ", " << audioData << "), ";
-                            /*
-                            if (audioData < 0.001) {
-                                std::cout << "(" << i << ", " << 0 << "), ";
-                            } else {
+                            if (audioData != 0) {
                                 std::cout << "(" << i << ", " << audioData << "), ";
-                            }*/
+                            }
                         }
                         std::cout << "\n";
                     }
@@ -470,9 +480,14 @@ public:
             auto& currentGainNode = currentGainNodeWrapper.value();
             currentGainNode["gain"].set("value", emscripten::val(1));
         } else {
+            int audioBufferLength;
+            if (sonificationApplyInverseFourierTransform) {
+                audioBufferLength = ifftAudioSamples;
+            } else {
+                audioBufferLength = iterationsToShow * rawAudioSampleRateFactor;
+            }
             auto audioBuffer = audioCtx.call<emscripten::val>("createBuffer", emscripten::val(1),
-                                                              emscripten::val(iterationsToShow *
-                                                                              rawAudioSampleRateFactor),
+                                                              emscripten::val(audioBufferLength),
                                                               audioCtx["sampleRate"]);
             auto audioDataJsArray = emscripten::val(audioData.at(x));
             auto Float32Array = emscripten::val::global("Float32Array");
