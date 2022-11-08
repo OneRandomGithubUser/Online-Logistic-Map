@@ -474,10 +474,30 @@ public:
         if (currentlyCalculating) {
             return;
         }
+        if (isCurrentlyPlaying) {
+            ctx.set("fillStyle", emscripten::val("rgba(255, 255, 255, 0.5)"));
+            ctx.call<void>("fillRect", 0, canvasHeight - minY.at(currentXCoord), currentXCoord, -(maxY.at(currentXCoord) - minY.at(currentXCoord)));
+            ctx.set("fillStyle", emscripten::val("black"));
+        } else {
+            ctx.call<void>("setLineDash", solidLinePattern);
+            ctx.call<void>("beginPath");
+            ctx.call<void>("moveTo", emscripten::val(currentXCoord), emscripten::val(0));
+            ctx.call<void>("lineTo", emscripten::val(currentXCoord), canvas["height"]);
+            ctx.call<void>("stroke");
+            ctx.call<void>("setLineDash", dashedLinePattern);
+        }
+        ctx.call<void>("beginPath");
+        ctx.call<void>("moveTo", emscripten::val(currentX), emscripten::val(0));
+        ctx.call<void>("lineTo", emscripten::val(currentX), canvas["height"]);
+        ctx.call<void>("stroke");
+        ctx.call<void>("beginPath");
+        ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(currentY));
+        ctx.call<void>("lineTo", canvas["width"], emscripten::val(currentY));
+        ctx.call<void>("stroke");
         if (showLabel) {
             // NOTE: the label relies on the assumption that the canvases are centered
-            std::string xText = "x : " + std::to_string((int) currentX) + " (r = " + std::to_string(rLowerBound + (currentX / canvasWidth) * (rUpperBound - rLowerBound)) + ")";
-            std::string yText = "y : " + std::to_string((int) currentY);
+            std::string xText = "r = " + std::to_string(rLowerBound + (currentX / canvasWidth) * (rUpperBound - rLowerBound));
+            std::string yText = "x = " + std::to_string(xLowerBound + (1 - currentY / canvasHeight) * (xUpperBound - xLowerBound));
             if (sonificationApplyInverseFourierTransform && isCurrentlyPlaying) {
                 // remember that currentY starts from 0 at the top, not at the bottom
                 yText = yText + " (" + std::to_string(ifftMinFrequency + (1 - currentY / canvasHeight) * (ifftMaxFrequency - ifftMinFrequency)) + " Hz)";
@@ -495,7 +515,7 @@ public:
             double greaterLeft = std::max(xLeft, yLeft);
             double greaterRight = std::max(xRight, yRight);
             double boundingBoxX = greaterLeft + greaterRight + 2 * overlayTextMargin;
-            double boundingBoxY = xUp + xDown + yUp + yDown + 2 * overlayTextMargin;
+            double boundingBoxY = xUp + 1.15 * (xDown + yUp) + yDown + 2 * overlayTextMargin;
             bool showLabel = true;
             std::array<int, 2> textboxLocation; // (1, 1) to put the textbox down and right, (-1, 1) to put it up and right, etc.
             if (boundingBoxX < canvasWidth - currentX) {
@@ -518,35 +538,10 @@ public:
                                textboxLocation[1] * boundingBoxY);
                 ctx.set("fillStyle", emscripten::val("black"));
                 // NOTE: this part especially will break if the canvases are not centered
-                if (textboxLocation[1] == 1) {
-                    ctx.call<void>("fillText", xText, currentX + textboxLocation[0] * (overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (overlayTextMargin + xUp));
-                    ctx.call<void>("fillText", yText, currentX + textboxLocation[0] * (overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (overlayTextMargin + xUp + xDown + yUp));
-                } else {
-                    ctx.call<void>("fillText", xText, currentX + textboxLocation[0] * (overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (overlayTextMargin + xDown + yUp + yDown));
-                    ctx.call<void>("fillText", yText, currentX + textboxLocation[0] * (overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (overlayTextMargin + yDown));
-                }
+                ctx.call<void>("fillText", xText, currentX + textboxLocation[0] * boundingBoxX / 2, currentY + textboxLocation[1] * boundingBoxY / 2 - 1.15 * xDown);
+                ctx.call<void>("fillText", yText, currentX + textboxLocation[0] * boundingBoxX / 2, currentY + textboxLocation[1] * boundingBoxY / 2 + 1.15 * yUp);
             }
         }
-        if (isCurrentlyPlaying) {
-            ctx.set("fillStyle", emscripten::val("rgba(255, 255, 255, 0.5)"));
-            ctx.call<void>("fillRect", 0, canvasHeight - minY.at(currentXCoord), currentXCoord, -(maxY.at(currentXCoord) - minY.at(currentXCoord)));
-            ctx.set("fillStyle", emscripten::val("black"));
-        } else {
-            ctx.call<void>("setLineDash", solidLinePattern);
-            ctx.call<void>("beginPath");
-            ctx.call<void>("moveTo", emscripten::val(currentXCoord), emscripten::val(0));
-            ctx.call<void>("lineTo", emscripten::val(currentXCoord), canvas["height"]);
-            ctx.call<void>("stroke");
-            ctx.call<void>("setLineDash", dashedLinePattern);
-        }
-        ctx.call<void>("beginPath");
-        ctx.call<void>("moveTo", emscripten::val(currentX), emscripten::val(0));
-        ctx.call<void>("lineTo", emscripten::val(currentX), canvas["height"]);
-        ctx.call<void>("stroke");
-        ctx.call<void>("beginPath");
-        ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(currentY));
-        ctx.call<void>("lineTo", canvas["width"], emscripten::val(currentY));
-        ctx.call<void>("stroke");
     }
 
     void drawPlot(emscripten::val canvas) {
