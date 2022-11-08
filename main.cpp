@@ -213,6 +213,7 @@ public:
                 }
                 double pixelR = rLowerBound + rPixelStep * i;
                 auto &currentFrequencies = frequencies.at(i);
+                auto &currentPlotData = plotData.at(i);
                 auto &currentMaxFrequency = maxFrequencies.at(i);
                 int previousFrequenciesIndex;
                 if (i != 0) {
@@ -269,8 +270,10 @@ public:
                             // currentValue ranges from [0, 1] and subpixelHeight ranges from [0, canvasHeight]
                             double subpixelHeight =
                                     canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
+                            int pixelHeight = std::round(subpixelHeight);
                             // plot
                             if (currentSubpixelIsCentered) {
+                                currentPlotData.at(pixelHeight)++;
                                 if (subpixelHeight > maxY.at(i)) {
                                     maxY.at(i) = subpixelHeight;
                                 }
@@ -352,7 +355,6 @@ public:
                                     }
                                 }
                             } else {
-                                int pixelHeight = std::round(subpixelHeight);
                                 currentFrequencies.at(pixelHeight)++;
                                 if (currentMaxFrequency < currentFrequencies.at(pixelHeight)) {
                                     currentMaxFrequency = currentFrequencies.at(pixelHeight);
@@ -547,6 +549,22 @@ public:
         ctx.call<void>("stroke");
     }
 
+    void drawPlot(emscripten::val canvas) {
+        if (plotData.size() == 0 || plotData[0].size() == 0) {
+            return;
+        }
+        emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+        ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
+        auto& currentPlotData = plotData[currentXCoord];
+        ctx.call<void>("beginPath");
+        // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
+        ctx.call<void>("moveTo", emscripten::val(canvasWidth), emscripten::val(canvasHeight));
+        for (int i = 0; i < canvasHeight; i++) {
+            ctx.call<void>("lineTo", emscripten::val(canvasWidth - currentPlotData[i]), emscripten::val(canvasHeight - i));
+        }
+        ctx.call<void>("stroke");
+    }
+
     void sonifyLogisticMap() {
         if (!audioCtxWrapper.has_value()) {
             emscripten::val AudioContext = emscripten::val::global("AudioContext");
@@ -680,7 +698,8 @@ void RenderPlot(double DOMHighResTimeStamp)
 {
     emscripten::val document = emscripten::val::global("document");
     emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-plot"));
-    emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+    auto& logisticMap = GetLogisticMap();
+    logisticMap.drawPlot(canvas);
     std::cout << "plot\n";
 }
 
@@ -725,8 +744,8 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
             logisticMap.set_current_mouse_coordinates(offsetX, offsetY);
             if (!logisticMap.currentlyCalculating && mouseIsDown) {
                 logisticMap.sonifyLogisticMap();
+                window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
             }
-            // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
         }
     }
     emscripten::val window = emscripten::val::global("window");
