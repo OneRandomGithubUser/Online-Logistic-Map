@@ -71,6 +71,11 @@ public:
     std::array<unsigned char, 4> minLogisticMapRGBA;
     int widthSamplesPerPixel;
     int numRValues;
+    std::array<double, 2> currentMouseCoordinates;
+    int canvasWidth;
+    int canvasHeight;
+    double overlayTextMargin;
+    bool showLabel;
 
     // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
     // through the UI. It is read only by CalculateLogisticMap.
@@ -84,11 +89,9 @@ public:
     int iterationsCalculated;
     int numIterations;
     int calculationStage;
+    bool isCurrentlyPlaying;
 
 private:
-    int canvasWidth;
-    int canvasHeight;
-    std::array<double, 2> currentMouseCoordinates;
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
@@ -99,8 +102,7 @@ private:
     std::optional<emscripten::val> audioCtxWrapper;
     std::vector<std::optional<emscripten::val>> gainNodes;
     // requires std::optional wrappers because these are only permitted to be created after the first user interaction
-    bool isCurrentlyPlaying;
-    int currentlyPlayingXCoord;
+    int currentXCoord;
     fftw_plan fftwPlan;
 
     double LogisticFunction(double r, double input) {
@@ -144,16 +146,18 @@ public:
         minLogisticMapRGBA.at(3) = 0;
         widthSamplesPerPixel = 2 * extraSymmetricalSamplesPerPixel + 1;
         numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
+        canvasWidth = 0;
+        canvasHeight = 0;
+        overlayTextMargin = 15;
+        showLabel = true;
         needsToRecalculate = false;
         currentlyCalculating = false;
         iterationsCalculated = 0;
         calculationStage = 0;
         currentMouseCoordinates.at(0) = 0;
         currentMouseCoordinates.at(1) = 0;
-        canvasWidth = 0;
-        canvasHeight = 0;
         isCurrentlyPlaying = false;
-        currentlyPlayingXCoord = 0;
+        currentXCoord = 0;
     }
     void resizeMatrix(std::vector<std::vector<double>>& matrix, int numVectors, std::vector<double>& defaultVector) {
         matrix.resize(numVectors, defaultVector);
@@ -406,7 +410,6 @@ public:
                     pixelIndex -= canvasWidth * 4;
                 }
                 if (sonificationApplyInverseFourierTransform) {
-                    // TODO: apply Inverse Fast Fourier Transform
                     auto currentAudioData = audioData.at(i);
                     // fftwIO is in halfcomplex format and currentAudioData has just the real components
                     // we want the imaginary parts to be 0 (for now at least)
@@ -451,6 +454,7 @@ public:
 
         std::cout << "drawing logistic map\n";
         // TODO: maybe make emscripten directly interpret a std::vector<char> as a Uint8ClampedArray
+        ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
         auto imageDataJsArray = emscripten::val(imageData);
         auto Uint8ClampedArray = emscripten::val::global("Uint8ClampedArray");
         auto imageDataJsUint8ClampedArray = Uint8ClampedArray.new_(imageDataJsArray);
@@ -466,7 +470,7 @@ public:
             audioCtxWrapper = AudioContext.new_();
         }
         if (isCurrentlyPlaying) {
-            auto& currentGainNode = gainNodes.at(currentlyPlayingXCoord).value();
+            auto& currentGainNode = gainNodes.at(currentXCoord).value();
             currentGainNode["gain"].set("value", emscripten::val(0));
         }
         auto& audioCtx = audioCtxWrapper.value();
@@ -474,7 +478,7 @@ public:
         if (x < 0) {x = 0;}
         if (x > canvasWidth) {x = canvasWidth;}
         isCurrentlyPlaying = true;
-        currentlyPlayingXCoord = x;
+        currentXCoord = x;
         auto& currentGainNodeWrapper = gainNodes.at(x);
         if (currentGainNodeWrapper.has_value()) {
             auto& currentGainNode = currentGainNodeWrapper.value();
@@ -503,14 +507,22 @@ public:
             bufferSourceNode.call<void>("connect", gainNode);
             gainNode.call<void>("connect", audioCtx["destination"]);
         }
+        auto document = emscripten::val::global("document");
+        emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
+        emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+        ctx.set("strokeStyle", emscripten::val("red"));
     }
 
     void desonifyLogisticMap() {
         if (isCurrentlyPlaying) {
-            auto& currentGainNode = gainNodes.at(currentlyPlayingXCoord).value();
+            auto& currentGainNode = gainNodes.at(currentXCoord).value();
             currentGainNode["gain"].set("value", emscripten::val(0));
             isCurrentlyPlaying = false;
         }
+        auto document = emscripten::val::global("document");
+        emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
+        emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+        ctx.set("strokeStyle", emscripten::val("black"));
     }
 };
 
@@ -565,12 +577,80 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
     return finishValues.at(0) && resizeLogisticMap || finishValues.at(1) && calculateLogisticMap || finishValues.at(2) && renderLogisticMap;
 }
 
-void RenderLogisticMapOverlay(double DOMHighResTimeStamp) {
-    bool manipulationWasFinished = ManipulateLogisticMap(false, false, true);
-    emscripten::val window = emscripten::val::global("window");
-    if (!manipulationWasFinished) {
-        window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
+void RenderLogisticMapOverlay(double DOMHighResTimeStamp)
+{
+    auto& logisticMap = GetLogisticMap();
+    auto& currentMouseCoordinates = logisticMap.currentMouseCoordinates;
+    double currentX = currentMouseCoordinates[0];
+    double currentY = currentMouseCoordinates[1];
+    emscripten::val document = emscripten::val::global("document");
+    emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
+    emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+    ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
+    if (logisticMap.currentlyCalculating) {
+        return;
     }
+    if (logisticMap.showLabel) {
+        // NOTE: the label relies on the assumption that the canvases are centered
+        std::string xText = "x : " + std::to_string((int) currentX) + " (r = " + std::to_string(logisticMap.rLowerBound + (currentX / logisticMap.canvasWidth) * (logisticMap.rUpperBound - logisticMap.rLowerBound)) + ")";
+        std::string yText = "y : " + std::to_string((int) currentY);
+        if (logisticMap.sonificationApplyInverseFourierTransform && logisticMap.isCurrentlyPlaying) {
+            // remember that currentY starts from 0 at the top, not at the bottom
+            yText = yText + " (" + std::to_string(logisticMap.ifftMinFrequency + (1 - currentY / logisticMap.canvasHeight) * (logisticMap.ifftMaxFrequency - logisticMap.ifftMinFrequency)) + " Hz)";
+        }
+        emscripten::val xTextMetrics = ctx.call<emscripten::val>("measureText", emscripten::val(xText));
+        emscripten::val yTextMetrics = ctx.call<emscripten::val>("measureText", emscripten::val(yText));
+        double xLeft    = xTextMetrics["actualBoundingBoxLeft"].as<double>();
+        double xRight   = xTextMetrics["actualBoundingBoxRight"].as<double>();
+        double xUp      = xTextMetrics["actualBoundingBoxAscent"].as<double>();
+        double xDown    = xTextMetrics["actualBoundingBoxDescent"].as<double>();
+        double yLeft    = yTextMetrics["actualBoundingBoxLeft"].as<double>();
+        double yRight   = yTextMetrics["actualBoundingBoxRight"].as<double>();
+        double yUp      = yTextMetrics["actualBoundingBoxAscent"].as<double>();
+        double yDown    = yTextMetrics["actualBoundingBoxDescent"].as<double>();
+        double greaterLeft = std::max(xLeft, yLeft);
+        double greaterRight = std::max(xRight, yRight);
+        double boundingBoxX = greaterLeft + greaterRight + 2 * logisticMap.overlayTextMargin;
+        double boundingBoxY = xUp + xDown + yUp + yDown + 2 * logisticMap.overlayTextMargin;
+        bool showLabel = true;
+        std::array<int, 2> textboxLocation; // (1, 1) to put the textbox down and right, (-1, 1) to put it up and right, etc.
+        if (boundingBoxX < logisticMap.canvasWidth - currentX) {
+            textboxLocation[0] = 1;
+        } else if (boundingBoxX < currentX) {
+            textboxLocation[0] = -1;
+        } else {
+            showLabel = false;
+        }
+        if (boundingBoxY < logisticMap.canvasHeight - currentY) {
+            textboxLocation[1] = 1;
+        } else if (boundingBoxY < currentY) {
+            textboxLocation[1] = -1;
+        } else {
+            showLabel = false;
+        }
+        if (showLabel) {
+            ctx.set("fillStyle", emscripten::val("rgba(255, 255, 255, 0.5)"));
+            ctx.call<void>("fillRect", currentX, currentY, textboxLocation[0] * boundingBoxX,
+                           textboxLocation[1] * boundingBoxY);
+            ctx.set("fillStyle", emscripten::val("black"));
+            // NOTE: this part especially will break if the canvases are not centered
+            if (textboxLocation[1] == 1) {
+                ctx.call<void>("fillText", xText, currentX + textboxLocation[0] * (logisticMap.overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (logisticMap.overlayTextMargin + xUp));
+                ctx.call<void>("fillText", yText, currentX + textboxLocation[0] * (logisticMap.overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (logisticMap.overlayTextMargin + xUp + xDown + yUp));
+            } else {
+                ctx.call<void>("fillText", xText, currentX + textboxLocation[0] * (logisticMap.overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (logisticMap.overlayTextMargin + xDown + yUp + yDown));
+                ctx.call<void>("fillText", yText, currentX + textboxLocation[0] * (logisticMap.overlayTextMargin + greaterLeft), currentY + textboxLocation[1] * (logisticMap.overlayTextMargin + yDown));
+            }
+        }
+    }
+    ctx.call<void>("beginPath");
+    ctx.call<void>("moveTo", emscripten::val(currentX), emscripten::val(0));
+    ctx.call<void>("lineTo", emscripten::val(currentX), canvas["height"]);
+    ctx.call<void>("stroke");
+    ctx.call<void>("beginPath");
+    ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(currentY));
+    ctx.call<void>("lineTo", canvas["width"], emscripten::val(currentY));
+    ctx.call<void>("stroke");
 }
 
 void RenderLogisticMap(double DOMHighResTimeStamp) {
@@ -632,9 +712,10 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
                 logisticMap.sonifyLogisticMap();
             }
             // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
-            // window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
         }
     }
+    emscripten::val window = emscripten::val::global("window");
+    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
 }
 
 void InitializeCanvases(emscripten::val event)
@@ -679,6 +760,7 @@ EMSCRIPTEN_BINDINGS(bindings)\
 {\
   emscripten::function("InitializeCanvases", InitializeCanvases);\
   emscripten::function("InitializeCanvas", InitializeCanvas);\
+  emscripten::function("RenderLogisticMapOverlay", RenderLogisticMapOverlay);\
   emscripten::function("RenderLogisticMap", RenderLogisticMap);\
   emscripten::function("RenderPlot", RenderPlot);\
   emscripten::function("InteractWithLogisticMapCanvas", InteractWithLogisticMapCanvas);\
