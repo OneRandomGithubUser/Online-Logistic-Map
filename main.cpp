@@ -12,6 +12,7 @@
 #include <utility>
 #include <optional>
 #include <stdexcept>
+//#include <mutex>
 #include "fftw-3.3.10/api/fftw3.h"
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
@@ -47,6 +48,7 @@ namespace emscripten {
 class LogisticMap {
 public:
     // TODO: make getters and setters for these to automatically update needsToRecalculate
+    int functionID;
     int iterationsToSteadyState;
     int iterationsToShow;
     int extraSymmetricalSamplesPerPixel;
@@ -61,8 +63,8 @@ public:
     bool logarithmicShadingEnabled; // alternative is linear shading
     bool sonificationApplyInverseFourierTransform;
     int rawAudioSampleRateFactor;
-    double ifftMinFrequency;
-    double ifftMaxFrequency;
+    int ifftMinFrequency;
+    int ifftMaxFrequency;
     int ifftAudioSamples;
     // ifftAudioSamples cannot be less than twice ifftMaxFrequency
     const int maxCalculationStage = 2;
@@ -77,6 +79,7 @@ public:
     double overlayTextMargin;
     bool showLabel;
     int currentXCoord;
+    //std::mutex parameterMutex;
 
     // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
     // through the UI. It is read only by CalculateLogisticMap.
@@ -92,7 +95,6 @@ public:
     int calculationStage;
     bool isCurrentlyPlaying;
 
-private:
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
@@ -106,9 +108,34 @@ private:
     std::vector<std::optional<emscripten::val>> gainNodes;
     // requires std::optional wrappers because these are only permitted to be created after the first user interaction
     fftw_plan fftwPlan;
+    /*
+public:
+    void set_iterations_to_steady_state(int iterations) {
+        std::scoped_lock lock(parameterMutex);
+        iterationsToSteadyState = iterations;
+    }
+    void set_iterations_to_show(int iterations) {
+        std::scoped_lock lock(parameterMutex);
+        iterationsToShow = iterations;
+    }
+    void set_extra_symmetrical_samples_per_pixel(int extraSamples) {
+        std::scoped_lock lock(parameterMutex);
+        extraSymmetricalSamplesPerPixel = extraSamples;
+    }*/
+
+private:
 
     double LogisticFunction(double r, double input) {
-        return r * input * (1 - input);
+        switch (functionID) {
+            case 0:
+                return r * input * (1 - input);
+            case 1:
+                return r * input * std::exp(-input);
+            case 2:
+                return r * 1 / std::tgamma(input);
+            default:
+                return r * input * (1 - input);
+        }
     }
 
 public:
@@ -117,13 +144,14 @@ public:
         currentMouseCoordinates.at(1) = y;
     }
     LogisticMap() {
+        functionID = 0;
         iterationsToSteadyState = 1000;
         iterationsToShow = 2000;
         extraSymmetricalSamplesPerPixel = 2;
         logScalingFactor = 5;
         linearUpperBoundFactor = 3;
         rLowerBound = 2.75;
-        rUpperBound = 3.99;
+        rUpperBound = 4;
         startingValue = 0.5;
         xLowerBound = 0;
         xUpperBound = 1;
@@ -132,7 +160,7 @@ public:
         sonificationApplyInverseFourierTransform = true;
         rawAudioSampleRateFactor = 20;
         ifftMinFrequency = 0;
-        ifftMaxFrequency = 2500;
+        ifftMaxFrequency = 1000;
         ifftAudioSamples = 10000;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
@@ -246,31 +274,32 @@ public:
                     bool currentSubpixelIsCentered = (j == 0);
                     for (int iteration = 0; iteration < iterationsToShow; iteration++) {
                         currentValue = LogisticFunction(currentR, currentValue);
-                        if (currentSubpixelIsCentered) {
-                            // sonification
-                            if (sonificationApplyInverseFourierTransform) {
-                                // currentValue ranges from [0, 1]
-                                // bucket ranges from [0, ifftMaxFrequency - ifftMinFrequency]
-                                // audioDataIndex ranges from [ifftMinFrequency, ifftMaxFrequency]
-                                double bucket = currentValue * (ifftMaxFrequency - ifftMinFrequency);
-                                int audioDataIndex = std::floor(bucket + ifftMinFrequency);
-                                currentAudioData.at(audioDataIndex) += audioDataIncrement;
-                            } else {
-                                // currentValue ranges from [0, 1] but currentAudioDataPoint ranges from [-1, 1]
-                                double currentAudioDataPoint = currentValue * 2 - 1;
-                                // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
-                                for (int k = i * rawAudioSampleRateFactor; k < (i+1) * rawAudioSampleRateFactor; k++) {
-                                    currentAudioData.at(k) = currentAudioDataPoint;
+                        if (currentValue >= xLowerBound && currentValue < xUpperBound) {
+                            // normalize currentValue's range from [xLowerBound, xUpperBound) to [0, 1)
+                            double normalizedCurrentValue = (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
+                            if (currentSubpixelIsCentered) {
+                                // sonification
+                                if (sonificationApplyInverseFourierTransform) {
+                                    // bucket ranges from [0, ifftMaxFrequency - ifftMinFrequency)
+                                    // audioDataIndex ranges from [ifftMinFrequency, ifftMaxFrequency - 1]
+                                    double bucket = normalizedCurrentValue * (ifftMaxFrequency - ifftMinFrequency);
+                                    int audioDataIndex = (int) std::floor(bucket + ifftMinFrequency);
+                                    currentAudioData.at(audioDataIndex) += audioDataIncrement;
+                                } else {
+                                    // currentAudioDataPoint ranges from [-1, 1)
+                                    double currentAudioDataPoint = normalizedCurrentValue * 2 - 1;
+                                    // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
+                                    for (int k = i * rawAudioSampleRateFactor; k < (i+1) * rawAudioSampleRateFactor; k++) {
+                                        currentAudioData.at(k) = currentAudioDataPoint;
+                                    }
                                 }
+                                // plot
+                                currentDataPoints.at(iteration) = currentValue;
                             }
-                            // plot
-                            currentDataPoints.at(iteration) = currentValue;
-                        }
-                        if (currentValue > xLowerBound && currentValue < xUpperBound) {
-                            // currentValue ranges from [0, 1] and subpixelHeight ranges from [0, canvasHeight]
-                            double subpixelHeight =
-                                    canvasHeight * (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
-                            int pixelHeight = std::round(subpixelHeight);
+                            // subpixelHeight ranges from [0, canvasHeight)
+                            // pixelHeight ranges from [0, canvasHeight - 1]
+                            double subpixelHeight = normalizedCurrentValue * canvasHeight;
+                            int pixelHeight = std::min((int) std::round(subpixelHeight), canvasHeight - 1);
                             // plot
                             if (currentSubpixelIsCentered) {
                                 currentPlotData.at(pixelHeight)++;
@@ -283,8 +312,9 @@ public:
                             }
                             // visualization
                             if (antiAliasingEnabled) {
-                                int lowerPixelHeight = std::floor(subpixelHeight);
-                                int upperPixelHeight = std::ceil(subpixelHeight);
+                                // lowerPixelHeight and upperPixelHeight ranges from [0, canvasHeight - 1]
+                                int lowerPixelHeight = (int) std::floor(subpixelHeight);
+                                int upperPixelHeight = std::min((int) std::ceil(subpixelHeight), canvasHeight - 1);
                                 // won't check for lowerPixelHeight == upperPixelHeight since that will be very rare
                                 // subpixelHeight - lowerPixelHeight and upperPixelHeight - subpixelHeight might seem switched but they're not
                                 // TODO: remove lots of repetition by defining a function
