@@ -66,6 +66,7 @@ public:
     int ifftMinFrequency;
     int ifftMaxFrequency;
     int ifftAudioSamples;
+    double audioLerpTime;
     // ifftAudioSamples cannot be less than twice ifftMaxFrequency
     const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
@@ -162,6 +163,7 @@ public:
         ifftMinFrequency = 0;
         ifftMaxFrequency = 1000;
         ifftAudioSamples = 10000;
+        audioLerpTime = 0.002;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
         backgroundRGBA.at(2) = 255;
@@ -590,65 +592,90 @@ public:
         ctx.call<void>("stroke");
     }
 
+    void createGainNode(int nodeID) {
+        auto& audioCtx = audioCtxWrapper.value();
+        auto& currentGainNodeWrapper = gainNodes.at(nodeID);
+        int audioBufferLength;
+        if (sonificationApplyInverseFourierTransform) {
+            audioBufferLength = ifftAudioSamples;
+        } else {
+            audioBufferLength = iterationsToShow * rawAudioSampleRateFactor;
+        }
+        auto audioBuffer = audioCtx.call<emscripten::val>("createBuffer", emscripten::val(1),
+                                                          emscripten::val(audioBufferLength),
+                                                          audioCtx["sampleRate"]);
+        auto audioDataJsArray = emscripten::val(audioData.at(nodeID));
+        auto Float32Array = emscripten::val::global("Float32Array");
+        auto audioDataJsFloat32Array = Float32Array.new_(audioDataJsArray);
+        audioBuffer.call<void>("copyToChannel", audioDataJsFloat32Array, emscripten::val(0));
+        auto bufferSourceNode = audioCtx.call<emscripten::val>("createBufferSource");
+        bufferSourceNode.set("loop", emscripten::val(true));
+        bufferSourceNode.set("buffer", audioBuffer);
+        emscripten::val GainNode = emscripten::val::global("GainNode");
+        currentGainNodeWrapper = GainNode.new_(audioCtx);
+        auto& gainNode = currentGainNodeWrapper.value();
+        gainNode["gain"].set("value", emscripten::val(0));
+        bufferSourceNode.call<void>("start", emscripten::val(0));
+        bufferSourceNode.call<void>("connect", gainNode);
+        gainNode.call<void>("connect", audioCtx["destination"]);
+    }
+
+    void lerpPlayGainNode(int nodeID, double currentTime) {
+        auto& currentGainNode = gainNodes.at(nodeID).value();
+        currentGainNode["gain"].call<void>("cancelAndHoldAtTime", emscripten::val(currentTime));
+        currentGainNode["gain"].call<void>("setValueAtTime", currentGainNode["gain"]["value"], emscripten::val(currentTime));
+        currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(1), emscripten::val(currentTime + audioLerpTime));
+    }
+
+    void lerpStopGainNode(int nodeID, double currentTime) {
+        auto& currentGainNode = gainNodes.at(nodeID).value();
+        currentGainNode["gain"].call<void>("cancelAndHoldAtTime", emscripten::val(currentTime));
+        currentGainNode["gain"].call<void>("setValueAtTime", currentGainNode["gain"]["value"], emscripten::val(currentTime));
+        currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(0), emscripten::val(currentTime + audioLerpTime));
+    }
+
     void sonifyLogisticMap() {
         if (!audioCtxWrapper.has_value()) {
             emscripten::val AudioContext = emscripten::val::global("AudioContext");
             audioCtxWrapper = AudioContext.new_();
         }
-        if (isCurrentlyPlaying) {
-            auto& currentGainNode = gainNodes.at(currentXCoord).value();
-            currentGainNode["gain"].set("value", emscripten::val(0));
+        if (!isCurrentlyPlaying) {
+            auto document = emscripten::val::global("document");
+            emscripten::val canvas = document.call<emscripten::val>("getElementById",
+                                                                    emscripten::val("canvas-logistic-map-overlay"));
+            emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+            ctx.set("strokeStyle", emscripten::val("red"));
         }
-        auto& audioCtx = audioCtxWrapper.value();
         int x = currentMouseCoordinates.at(0);
         if (x < 0) {x = 0;}
         if (x > canvasWidth) {x = canvasWidth;}
-        isCurrentlyPlaying = true;
-        currentXCoord = x;
         auto& currentGainNodeWrapper = gainNodes.at(x);
-        if (currentGainNodeWrapper.has_value()) {
-            auto& currentGainNode = currentGainNodeWrapper.value();
-            currentGainNode["gain"].set("value", emscripten::val(1));
-        } else {
-            int audioBufferLength;
-            if (sonificationApplyInverseFourierTransform) {
-                audioBufferLength = ifftAudioSamples;
-            } else {
-                audioBufferLength = iterationsToShow * rawAudioSampleRateFactor;
-            }
-            auto audioBuffer = audioCtx.call<emscripten::val>("createBuffer", emscripten::val(1),
-                                                              emscripten::val(audioBufferLength),
-                                                              audioCtx["sampleRate"]);
-            auto audioDataJsArray = emscripten::val(audioData.at(x));
-            auto Float32Array = emscripten::val::global("Float32Array");
-            auto audioDataJsFloat32Array = Float32Array.new_(audioDataJsArray);
-            audioBuffer.call<void>("copyToChannel", audioDataJsFloat32Array, emscripten::val(0));
-            auto bufferSourceNode = audioCtx.call<emscripten::val>("createBufferSource");
-            bufferSourceNode.set("loop", emscripten::val(true));
-            bufferSourceNode.set("buffer", audioBuffer);
-            emscripten::val GainNode = emscripten::val::global("GainNode");
-            gainNodes.at(x) = GainNode.new_(audioCtx);
-            auto& gainNode = gainNodes.at(x).value();
-            bufferSourceNode.call<void>("start");
-            bufferSourceNode.call<void>("connect", gainNode);
-            gainNode.call<void>("connect", audioCtx["destination"]);
+        if (!currentGainNodeWrapper.has_value()) {
+            // This is a relatively intensive task so currentTime should be measured after this step
+            createGainNode(x);
         }
-        auto document = emscripten::val::global("document");
-        emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
-        emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
-        ctx.set("strokeStyle", emscripten::val("red"));
+        auto& audioCtx = audioCtxWrapper.value();
+        double currentTime = audioCtx["currentTime"].as<double>();
+        if (isCurrentlyPlaying) {
+            lerpStopGainNode(currentXCoord, currentTime);
+        } else {
+            isCurrentlyPlaying = true;
+        }
+        currentXCoord = x;
+        lerpPlayGainNode(x, currentTime);
     }
 
     void desonifyLogisticMap() {
-        if (isCurrentlyPlaying) {
-            auto& currentGainNode = gainNodes.at(currentXCoord).value();
-            currentGainNode["gain"].set("value", emscripten::val(0));
-            isCurrentlyPlaying = false;
-        }
         auto document = emscripten::val::global("document");
         emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
         emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
         ctx.set("strokeStyle", emscripten::val("black"));
+        if (isCurrentlyPlaying) {
+            auto& audioCtx = audioCtxWrapper.value();
+            double currentTime = audioCtx["currentTime"].as<double>();
+            lerpStopGainNode(currentXCoord, currentTime);
+            isCurrentlyPlaying = false;
+        }
     }
 };
 
@@ -725,7 +752,6 @@ void RenderPlot(double DOMHighResTimeStamp)
     emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-plot"));
     auto& logisticMap = GetLogisticMap();
     logisticMap.drawPlot(canvas);
-    std::cout << "plot\n";
 }
 
 void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten::val array)
