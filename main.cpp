@@ -12,7 +12,8 @@
 #include <utility>
 #include <optional>
 #include <stdexcept>
-//#include <mutex>
+#include <mutex>
+#include <condition_variable>
 #include "fftw-3.3.10/api/fftw3.h"
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
@@ -80,7 +81,8 @@ public:
     double overlayTextMargin;
     bool showLabel;
     int currentXCoord;
-    //std::mutex parameterMutex;
+    std::mutex parameterMutex;
+    std::condition_variable parameterConditionVariable;
 
     // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
     // through the UI. It is read only by CalculateLogisticMap.
@@ -88,6 +90,7 @@ public:
     // That is fine since a change in this variable will initiate a recalculation anyways in CalculateLogisticMap - no
     // reason to continue calculating something that will need to be recalculated anyways!
     // TODO: add mutexes to these variables to prevent race conditions
+    bool safeToRecalculate;
     bool needsToRecalculate;
 
     bool currentlyCalculating;
@@ -109,20 +112,26 @@ public:
     std::vector<std::optional<emscripten::val>> gainNodes;
     // requires std::optional wrappers because these are only permitted to be created after the first user interaction
     fftw_plan fftwPlan;
-    /*
+
 public:
     void set_iterations_to_steady_state(int iterations) {
-        std::scoped_lock lock(parameterMutex);
+        std::unique_lock<std::mutex> lock(parameterMutex);
+        parameterConditionVariable.wait(lock, [this]{ return this->safeToRecalculate; });
         iterationsToSteadyState = iterations;
+        needsToRecalculate = true;
     }
     void set_iterations_to_show(int iterations) {
-        std::scoped_lock lock(parameterMutex);
+        std::unique_lock<std::mutex> lock(parameterMutex);
+        parameterConditionVariable.wait(lock, [this]{ return this->safeToRecalculate; });
         iterationsToShow = iterations;
+        needsToRecalculate = true;
     }
     void set_extra_symmetrical_samples_per_pixel(int extraSamples) {
-        std::scoped_lock lock(parameterMutex);
+        std::unique_lock<std::mutex> lock(parameterMutex);
+        parameterConditionVariable.wait(lock, [this]{ return this->safeToRecalculate; });
         extraSymmetricalSamplesPerPixel = extraSamples;
-    }*/
+        needsToRecalculate = true;
+    }
 
 private:
 
@@ -225,7 +234,8 @@ public:
         canvasHeight = newCanvasHeight;
         numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
     }
-    void calculateLogisticMap() {
+private:
+    bool tryCalculateLogisticMap() {
         std::cout << "calculating logistic map\n";
         currentlyCalculating = true;
         iterationsCalculated = 0;
@@ -235,171 +245,182 @@ public:
             // calculationStage 1: do the actual calculations
             double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
             double scalingFactor = 1.0 / (widthSamplesPerPixel * iterationsToShow);
-            for (long int i = 0; i < canvasWidth; i++) {
+            for (int i = 0; i < canvasWidth; i++) {
                 if (needsToRecalculate) {
                     // TODO: cancelling calculation currently chimerical
                     std::cout << "cancelled calculation of logistic map\n";
                     break;
                 }
                 double pixelR = rLowerBound + rPixelStep * i;
-                auto &currentFrequencies = frequencies.at(i);
-                auto &currentPlotData = plotData.at(i);
-                auto &currentMaxFrequency = maxFrequencies.at(i);
-                int previousFrequenciesIndex;
-                if (i != 0) {
-                    previousFrequenciesIndex = i - 1;
-                } else {
-                    previousFrequenciesIndex = i;
-                }
-                auto &previousFrequencies = frequencies.at(previousFrequenciesIndex);
-                auto &previousMaxFrequency = maxFrequencies.at(previousFrequenciesIndex);
-                int nextFrequenciesIndex;
-                if (i != canvasWidth - 1) {
-                    nextFrequenciesIndex = i + 1;
-                } else {
-                    nextFrequenciesIndex = i;
-                }
-                auto &nextFrequencies = frequencies.at(nextFrequenciesIndex);
-                auto &nextMaxFrequency = maxFrequencies.at(nextFrequenciesIndex);
-                auto& currentDataPoints = dataPoints.at(i);
-                auto& currentAudioData = audioData.at(i);
-                double audioDataIncrement = 0.5 / iterationsToShow;
-                // this is half of the inverse of iterationsToShow since the IFFT is doubled
-                for (int j = -extraSymmetricalSamplesPerPixel; j <= extraSymmetricalSamplesPerPixel; j++) {
-                    if (i == 0 && j < 0) { continue; } // don't go below the rLowerBound
-                    if (i == canvasWidth - 1 && j > 0) { continue; } // don't go above the rUpperBound
-                    double currentR = pixelR + j * rPixelStep / widthSamplesPerPixel;
-                    double currentValue = startingValue;
-                    for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
-                        currentValue = LogisticFunction(currentR, currentValue);
+                {
+                    std::scoped_lock lock(parameterMutex);
+                    safeToRecalculate = false;
+                    auto &currentFrequencies = frequencies.at(i);
+                    auto &currentPlotData = plotData.at(i);
+                    auto &currentMaxFrequency = maxFrequencies.at(i);
+                    int previousFrequenciesIndex;
+                    if (i != 0) {
+                        previousFrequenciesIndex = i - 1;
+                    } else {
+                        previousFrequenciesIndex = i;
                     }
-                    bool currentSubpixelIsCentered = (j == 0);
-                    for (int iteration = 0; iteration < iterationsToShow; iteration++) {
-                        currentValue = LogisticFunction(currentR, currentValue);
-                        if (currentValue >= xLowerBound && currentValue < xUpperBound) {
-                            // normalize currentValue's range from [xLowerBound, xUpperBound) to [0, 1)
-                            double normalizedCurrentValue = (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
-                            if (currentSubpixelIsCentered) {
-                                // sonification
-                                if (sonificationApplyInverseFourierTransform) {
-                                    // bucket ranges from [0, ifftMaxFrequency - ifftMinFrequency)
-                                    // audioDataIndex ranges from [ifftMinFrequency, ifftMaxFrequency - 1]
-                                    double bucket = normalizedCurrentValue * (ifftMaxFrequency - ifftMinFrequency);
-                                    int audioDataIndex = (int) std::floor(bucket + ifftMinFrequency);
-                                    currentAudioData.at(audioDataIndex) += audioDataIncrement;
-                                } else {
-                                    // currentAudioDataPoint ranges from [-1, 1)
-                                    double currentAudioDataPoint = normalizedCurrentValue * 2 - 1;
-                                    // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
-                                    for (int k = i * rawAudioSampleRateFactor; k < (i+1) * rawAudioSampleRateFactor; k++) {
-                                        currentAudioData.at(k) = currentAudioDataPoint;
+                    auto &previousFrequencies = frequencies.at(previousFrequenciesIndex);
+                    auto &previousMaxFrequency = maxFrequencies.at(previousFrequenciesIndex);
+                    int nextFrequenciesIndex;
+                    if (i != canvasWidth - 1) {
+                        nextFrequenciesIndex = i + 1;
+                    } else {
+                        nextFrequenciesIndex = i;
+                    }
+                    auto &nextFrequencies = frequencies.at(nextFrequenciesIndex);
+                    auto &nextMaxFrequency = maxFrequencies.at(nextFrequenciesIndex);
+                    auto &currentDataPoints = dataPoints.at(i);
+                    auto &currentAudioData = audioData.at(i);
+                    double audioDataIncrement = 0.5 / iterationsToShow;
+                    // this is half of the inverse of iterationsToShow since the IFFT is doubled
+                    for (int j = -extraSymmetricalSamplesPerPixel; j <= extraSymmetricalSamplesPerPixel; j++) {
+                        if (i == 0 && j < 0) { continue; } // don't go below the rLowerBound
+                        if (i == canvasWidth - 1 && j > 0) { continue; } // don't go above the rUpperBound
+                        double currentR = pixelR + j * rPixelStep / widthSamplesPerPixel;
+                        double currentValue = startingValue;
+                        for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
+                            currentValue = LogisticFunction(currentR, currentValue);
+                        }
+                        bool currentSubpixelIsCentered = (j == 0);
+                        for (int iteration = 0; iteration < iterationsToShow; iteration++) {
+                            currentValue = LogisticFunction(currentR, currentValue);
+                            if (currentValue >= xLowerBound && currentValue < xUpperBound) {
+                                // normalize currentValue's range from [xLowerBound, xUpperBound) to [0, 1)
+                                double normalizedCurrentValue =
+                                        (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
+                                if (currentSubpixelIsCentered) {
+                                    // sonification
+                                    if (sonificationApplyInverseFourierTransform) {
+                                        // bucket ranges from [0, ifftMaxFrequency - ifftMinFrequency)
+                                        // audioDataIndex ranges from [ifftMinFrequency, ifftMaxFrequency - 1]
+                                        double bucket = normalizedCurrentValue * (ifftMaxFrequency - ifftMinFrequency);
+                                        int audioDataIndex = (int) std::floor(bucket + ifftMinFrequency);
+                                        currentAudioData.at(audioDataIndex) += audioDataIncrement;
+                                    } else {
+                                        // currentAudioDataPoint ranges from [-1, 1)
+                                        double currentAudioDataPoint = normalizedCurrentValue * 2 - 1;
+                                        // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
+                                        for (int k = i * rawAudioSampleRateFactor;
+                                             k < (i + 1) * rawAudioSampleRateFactor; k++) {
+                                            currentAudioData.at(k) = currentAudioDataPoint;
+                                        }
                                     }
+                                    // plot
+                                    currentDataPoints.at(iteration) = currentValue;
                                 }
+                                // subpixelHeight ranges from [0, canvasHeight)
+                                // pixelHeight ranges from [0, canvasHeight - 1]
+                                double subpixelHeight = normalizedCurrentValue * canvasHeight;
+                                int pixelHeight = std::min((int) std::round(subpixelHeight), canvasHeight - 1);
                                 // plot
-                                currentDataPoints.at(iteration) = currentValue;
-                            }
-                            // subpixelHeight ranges from [0, canvasHeight)
-                            // pixelHeight ranges from [0, canvasHeight - 1]
-                            double subpixelHeight = normalizedCurrentValue * canvasHeight;
-                            int pixelHeight = std::min((int) std::round(subpixelHeight), canvasHeight - 1);
-                            // plot
-                            if (currentSubpixelIsCentered) {
-                                currentPlotData.at(pixelHeight)++;
-                                if (subpixelHeight > maxY.at(i)) {
-                                    maxY.at(i) = subpixelHeight;
+                                if (currentSubpixelIsCentered) {
+                                    currentPlotData.at(pixelHeight)++;
+                                    if (subpixelHeight > maxY.at(i)) {
+                                        maxY.at(i) = subpixelHeight;
+                                    }
+                                    if (subpixelHeight < minY.at(i)) {
+                                        minY.at(i) = subpixelHeight;
+                                    }
                                 }
-                                if (subpixelHeight < minY.at(i)) {
-                                    minY.at(i) = subpixelHeight;
-                                }
-                            }
-                            // visualization
-                            if (antiAliasingEnabled) {
-                                // lowerPixelHeight and upperPixelHeight ranges from [0, canvasHeight - 1]
-                                int lowerPixelHeight = (int) std::floor(subpixelHeight);
-                                int upperPixelHeight = std::min((int) std::ceil(subpixelHeight), canvasHeight - 1);
-                                // won't check for lowerPixelHeight == upperPixelHeight since that will be very rare
-                                // subpixelHeight - lowerPixelHeight and upperPixelHeight - subpixelHeight might seem switched but they're not
-                                // TODO: remove lots of repetition by defining a function
-                                if (j < 0) {
-                                    previousFrequencies.at(lowerPixelHeight) +=
-                                            (upperPixelHeight - subpixelHeight) * (-j / (double) widthSamplesPerPixel) *
-                                            scalingFactor;
-                                    if (previousMaxFrequency < previousFrequencies.at(lowerPixelHeight)) {
-                                        previousMaxFrequency = previousFrequencies.at(lowerPixelHeight);
-                                    }
-                                    currentFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) *
-                                                                               ((widthSamplesPerPixel + j) /
-                                                                                (double) widthSamplesPerPixel) *
-                                                                               scalingFactor;
-                                    if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
-                                        currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
-                                    }
-                                    previousFrequencies.at(upperPixelHeight) +=
-                                            (subpixelHeight - lowerPixelHeight) * (-j / (double) widthSamplesPerPixel) *
-                                            scalingFactor;
-                                    if (previousMaxFrequency < previousFrequencies.at(upperPixelHeight)) {
-                                        previousMaxFrequency = previousFrequencies.at(upperPixelHeight);
-                                    }
-                                    currentFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) *
-                                                                               ((widthSamplesPerPixel + j) /
-                                                                                (double) widthSamplesPerPixel) *
-                                                                               scalingFactor;
-                                    if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
-                                        currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
-                                    }
-                                } else if (j == 0) {
-                                    currentFrequencies.at(lowerPixelHeight) +=
-                                            (upperPixelHeight - subpixelHeight) * scalingFactor;
-                                    if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
-                                        currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
-                                    }
-                                    currentFrequencies.at(upperPixelHeight) +=
-                                            (subpixelHeight - lowerPixelHeight) * scalingFactor;
-                                    if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
-                                        currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                                // visualization
+                                if (antiAliasingEnabled) {
+                                    // lowerPixelHeight and upperPixelHeight ranges from [0, canvasHeight - 1]
+                                    int lowerPixelHeight = (int) std::floor(subpixelHeight);
+                                    int upperPixelHeight = std::min((int) std::ceil(subpixelHeight), canvasHeight - 1);
+                                    // won't check for lowerPixelHeight == upperPixelHeight since that will be very rare
+                                    // subpixelHeight - lowerPixelHeight and upperPixelHeight - subpixelHeight might seem switched but they're not
+                                    // TODO: remove lots of repetition by defining a function
+                                    if (j < 0) {
+                                        previousFrequencies.at(lowerPixelHeight) +=
+                                                (upperPixelHeight - subpixelHeight) *
+                                                (-j / (double) widthSamplesPerPixel) *
+                                                scalingFactor;
+                                        if (previousMaxFrequency < previousFrequencies.at(lowerPixelHeight)) {
+                                            previousMaxFrequency = previousFrequencies.at(lowerPixelHeight);
+                                        }
+                                        currentFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) *
+                                                                                   ((widthSamplesPerPixel + j) /
+                                                                                    (double) widthSamplesPerPixel) *
+                                                                                   scalingFactor;
+                                        if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
+                                            currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                                        }
+                                        previousFrequencies.at(upperPixelHeight) +=
+                                                (subpixelHeight - lowerPixelHeight) *
+                                                (-j / (double) widthSamplesPerPixel) *
+                                                scalingFactor;
+                                        if (previousMaxFrequency < previousFrequencies.at(upperPixelHeight)) {
+                                            previousMaxFrequency = previousFrequencies.at(upperPixelHeight);
+                                        }
+                                        currentFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) *
+                                                                                   ((widthSamplesPerPixel + j) /
+                                                                                    (double) widthSamplesPerPixel) *
+                                                                                   scalingFactor;
+                                        if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
+                                            currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                                        }
+                                    } else if (j == 0) {
+                                        currentFrequencies.at(lowerPixelHeight) +=
+                                                (upperPixelHeight - subpixelHeight) * scalingFactor;
+                                        if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
+                                            currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                                        }
+                                        currentFrequencies.at(upperPixelHeight) +=
+                                                (subpixelHeight - lowerPixelHeight) * scalingFactor;
+                                        if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
+                                            currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                                        }
+                                    } else {
+                                        currentFrequencies.at(lowerPixelHeight) +=
+                                                (upperPixelHeight - subpixelHeight) *
+                                                (j / (double) widthSamplesPerPixel) *
+                                                scalingFactor;
+                                        if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
+                                            currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                                        }
+                                        nextFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) *
+                                                                                ((widthSamplesPerPixel - j) /
+                                                                                 (double) widthSamplesPerPixel) *
+                                                                                scalingFactor;
+                                        if (nextMaxFrequency < nextFrequencies.at(lowerPixelHeight)) {
+                                            nextMaxFrequency = nextFrequencies.at(lowerPixelHeight);
+                                        }
+                                        currentFrequencies.at(upperPixelHeight) +=
+                                                (subpixelHeight - lowerPixelHeight) *
+                                                (j / (double) widthSamplesPerPixel) *
+                                                scalingFactor;
+                                        if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
+                                            currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
+                                        }
+                                        nextFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) *
+                                                                                ((widthSamplesPerPixel - j) /
+                                                                                 (double) widthSamplesPerPixel) *
+                                                                                scalingFactor;
+                                        if (nextMaxFrequency < nextFrequencies.at(upperPixelHeight)) {
+                                            nextMaxFrequency = nextFrequencies.at(upperPixelHeight);
+                                        }
                                     }
                                 } else {
-                                    currentFrequencies.at(lowerPixelHeight) +=
-                                            (upperPixelHeight - subpixelHeight) * (j / (double) widthSamplesPerPixel) *
-                                            scalingFactor;
-                                    if (currentMaxFrequency < currentFrequencies.at(lowerPixelHeight)) {
-                                        currentMaxFrequency = currentFrequencies.at(lowerPixelHeight);
+                                    currentFrequencies.at(pixelHeight)++;
+                                    if (currentMaxFrequency < currentFrequencies.at(pixelHeight)) {
+                                        currentMaxFrequency = currentFrequencies.at(pixelHeight);
                                     }
-                                    nextFrequencies.at(lowerPixelHeight) += (upperPixelHeight - subpixelHeight) *
-                                                                            ((widthSamplesPerPixel - j) /
-                                                                             (double) widthSamplesPerPixel) *
-                                                                            scalingFactor;
-                                    if (nextMaxFrequency < nextFrequencies.at(lowerPixelHeight)) {
-                                        nextMaxFrequency = nextFrequencies.at(lowerPixelHeight);
-                                    }
-                                    currentFrequencies.at(upperPixelHeight) +=
-                                            (subpixelHeight - lowerPixelHeight) * (j / (double) widthSamplesPerPixel) *
-                                            scalingFactor;
-                                    if (currentMaxFrequency < currentFrequencies.at(upperPixelHeight)) {
-                                        currentMaxFrequency = currentFrequencies.at(upperPixelHeight);
-                                    }
-                                    nextFrequencies.at(upperPixelHeight) += (subpixelHeight - lowerPixelHeight) *
-                                                                            ((widthSamplesPerPixel - j) /
-                                                                             (double) widthSamplesPerPixel) *
-                                                                            scalingFactor;
-                                    if (nextMaxFrequency < nextFrequencies.at(upperPixelHeight)) {
-                                        nextMaxFrequency = nextFrequencies.at(upperPixelHeight);
-                                    }
-                                }
-                            } else {
-                                currentFrequencies.at(pixelHeight)++;
-                                if (currentMaxFrequency < currentFrequencies.at(pixelHeight)) {
-                                    currentMaxFrequency = currentFrequencies.at(pixelHeight);
                                 }
                             }
                         }
+                        iterationsCalculated++;
                     }
-                    iterationsCalculated++;
                 }
-            }
-            if (needsToRecalculate) {
-                needsToRecalculate = false;
-                calculateLogisticMap();
+                safeToRecalculate = true;
+                parameterConditionVariable.notify_all();
+                if (needsToRecalculate) {
+                    return false;
+                }
             }
         }
         iterationsCalculated = 0;
@@ -468,14 +489,23 @@ public:
                 iterationsCalculated++;
             }
             if (needsToRecalculate) {
-                needsToRecalculate = false;
-                calculateLogisticMap();
+                return false;
             }
         }
         std::cout << "calculated logistic map\n";
         currentlyCalculating = false;
+        return true;
     }
 
+public:
+    void calculateLogisticMap() {
+        bool calculationWasSuccessful;
+        do {
+            calculationWasSuccessful = tryCalculateLogisticMap();
+            std::cout << calculationWasSuccessful << " success\n";
+        }
+        while (!calculationWasSuccessful);
+    }
     void drawLogisticMap(emscripten::val canvas) {
         auto ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
         auto canvasWidth = canvas["clientWidth"].as<int>();
@@ -614,6 +644,7 @@ public:
         emscripten::val GainNode = emscripten::val::global("GainNode");
         currentGainNodeWrapper = GainNode.new_(audioCtx);
         auto& gainNode = currentGainNodeWrapper.value();
+        // NOTE: this is directly done with set instead of with setValueAtTime or else the cancelAndHoldAtTime from lerpPlayGainNode will cancel it
         gainNode["gain"].set("value", emscripten::val(0));
         bufferSourceNode.call<void>("start", emscripten::val(0));
         bufferSourceNode.call<void>("connect", gainNode);
