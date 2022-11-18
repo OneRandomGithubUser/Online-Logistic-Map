@@ -200,33 +200,34 @@ public:
         currentMouseCoordinates.at(1) = 0;
         isCurrentlyPlaying = false;
     }
-    void resizeMatrix(std::vector<std::vector<double>>& matrix, int numVectors, std::vector<double>& defaultVector) {
-        matrix.resize(numVectors, defaultVector);
-        std::fill(matrix.begin(), matrix.end(), defaultVector);
+    template <typename T> void resizeVector(std::vector<T>& vector, int newSize, T defaultValue) {
+        vector.resize(newSize, defaultValue);
+        std::fill(vector.begin(), vector.begin() + std::min((int) vector.size(), newSize), defaultValue);
     }
     void resizeLogisticMap(int newCanvasWidth, int newCanvasHeight) {
         if (newCanvasWidth <= 0 || newCanvasHeight <= 0) {
             throw std::invalid_argument("resizeLogisticMap only accepts positive integers");
         }
-        maxFrequencies.resize(newCanvasWidth, 0);
-        minY.resize(newCanvasHeight, newCanvasHeight);
-        maxY.resize(newCanvasHeight, 0);
-        std::vector<double> columnFrequencies(newCanvasHeight, 0);
-        resizeMatrix(frequencies, newCanvasWidth, columnFrequencies);
-        std::vector<double> columnDataPoints(iterationsToShow, 0);
-        resizeMatrix(dataPoints, newCanvasWidth, columnDataPoints);
-        imageData.resize(newCanvasWidth * newCanvasHeight * 4, 0);
+        resizeVector<double>(maxFrequencies, newCanvasWidth, 0.0);
+        resizeVector<double>(minY, newCanvasWidth, newCanvasHeight);
+        resizeVector<double>(maxY, newCanvasWidth, 0.0);
+        std::vector<double> columnFrequencies(newCanvasHeight, 0.0);
+        resizeVector<std::vector<double>>(frequencies, newCanvasWidth, columnFrequencies);
+        std::vector<double> columnDataPoints(iterationsToShow, 0.0);
+        resizeVector<std::vector<double>>(dataPoints, newCanvasWidth, columnDataPoints);
+        resizeVector<unsigned char>(imageData, newCanvasWidth * newCanvasHeight * 4, 0);
         std::vector<double> columnPlotData(newCanvasHeight, 0.0);
-        resizeMatrix(plotData, newCanvasWidth, columnPlotData);
+        resizeVector<std::vector<double>>(plotData, newCanvasWidth, columnPlotData);
         std::vector<double> columnAudioData;
         if (sonificationApplyInverseFourierTransform) {
-            columnAudioData.resize(ifftAudioSamples, 0.0);
-            fftwIO.resize(2 * ifftAudioSamples, 0.0);
+            resizeVector<double>(columnAudioData, ifftAudioSamples, 0.0);
+            resizeVector<double>(fftwIO, 2 * ifftAudioSamples, 0.0);
         } else {
-            columnAudioData.resize(iterationsToShow * rawAudioSampleRateFactor, 0.0);
+            resizeVector<double>(columnAudioData, iterationsToShow * rawAudioSampleRateFactor, 0.0);
         }
-        resizeMatrix(audioData, newCanvasWidth, columnAudioData);
+        resizeVector<std::vector<double>>(audioData, newCanvasWidth, columnAudioData);
         gainNodes.resize(newCanvasWidth);
+        //std::fill(gainNodes.begin(), gainNodes.begin() + std::min(gainNodes.size(), newCanvasWidth), defaultValue);
         auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE);
         fftw_destroy_plan(fftwPlan);
         fftwPlan = newFftwPlan;
@@ -433,7 +434,7 @@ private:
                 rangeRGBA[i] = maxLogisticMapRGBA[i] - minLogisticMapRGBA[i];
             }
             double cutoffFrequency = std::exp(-logScalingFactor);
-            for (long int i = 0; i < canvasWidth; i++) {
+            for (int i = 0; i < canvasWidth; i++) {
                 if (needsToRecalculate) {
                     std::cout << "cancelled calculation of logistic map\n";
                     break;
@@ -520,6 +521,7 @@ public:
         auto ImageData = emscripten::val::global("ImageData");
         auto imageDataJsObject = ImageData.new_(imageDataJsUint8ClampedArray, canvas["clientWidth"], canvas["clientHeight"]);
         ctx.call<void>("putImageData", imageDataJsObject, emscripten::val(0), emscripten::val(0));
+        // no need to clear the canvas, this does it automatically
         std::cout << "drew logistic map\n";
     }
 
