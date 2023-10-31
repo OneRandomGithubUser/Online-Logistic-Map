@@ -500,6 +500,42 @@ private:
 
 public:
     void calculateLogisticMap() {
+        emscripten::val document = emscripten::val::global("document");
+        emscripten::val dropdown = document.call<emscripten::val>("getElementById",
+                                                                  emscripten::val("equation"));
+        std::string dropdownValue = dropdown["value"].as<std::string>();
+        switch (dropdownValue[0]) {
+          case 'l':
+            std::cout << "detected logistic function\n";
+            functionID = 0;
+
+            rLowerBound = 2.75;
+            rUpperBound = 4;
+            xLowerBound = 0;
+            xUpperBound = 1;
+            break;
+          case 'e':
+            std::cout << "detected exponential function\n";
+            functionID = 1;
+
+            rLowerBound = 1;
+            rUpperBound = 30;
+            xLowerBound = 0;
+            xUpperBound = 11;
+            break;
+          case 'g':
+            std::cout << "detected gamma function\n";
+            functionID = 2;
+
+            rLowerBound = 1;
+            rUpperBound = 9;
+            xLowerBound = 0;
+            xUpperBound = 10;
+            break;
+          default:
+            functionID = 0;
+            break;
+        }
         bool calculationWasSuccessful;
         do {
             calculationWasSuccessful = tryCalculateLogisticMap();
@@ -626,8 +662,6 @@ public:
 
     void drawWaveform(emscripten::val canvas) {
       // TODO: make a canvas class to interpret emscripten::val canvas
-      std::cout << "drawing waveform\n";
-
       if (plotData.size() == 0 || plotData[0].size() == 0) {
         return;
       }
@@ -644,8 +678,6 @@ public:
         ctx.call<void>("lineTo", emscripten::val(i), emscripten::val(0.5 * canvasHeight - 0.5 * canvasHeight * currentPlotData[i]));
       }
       ctx.call<void>("stroke");
-
-      std::cout << "drew waveform\n";
     }
 
     void createGainNode(int nodeID) {
