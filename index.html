@@ -5,23 +5,28 @@
     <title>Online Logistic Map</title>
     <meta name = "viewport" content = "user-scalable = no">
     <link rel="stylesheet" href="main.css">
-    <script src="main.js"></script>
-    <script src="coi-serviceworker.min.js"></script>
+    <script src="main.js" type="module"></script>
+    <!--<script src="coi-serviceworker.min.js" type="module"></script>-->
 </head>
 <body>
 <noscript>
     <div class="warning">JavaScript must be enabled to use the Online Logistic Map. I can't do this all in HTML!</div>
 </noscript>
 <main>
-    <div class="panel" id="plot-panel">
-        <canvas class="canvas left" id="canvas-plot"></canvas>
-    </div>
-    <div class="panel" id="logistic-map-panel">
-        <canvas class="canvas right" id="canvas-logistic-map"></canvas>
-        <canvas class="canvas right" id="canvas-logistic-map-overlay"></canvas>
-        <div id="progressbar-logistic-map">
-            <label id="label-progressbar-logistic-map" for="progressbar-logistic-map">Error</label>
-            <progress id="progress-logistic-map" value="0" max="0"></progress>
+    <div id="output-panels">
+        <div class="panel" id="plot-panel">
+            <canvas class="canvas left" id="canvas-plot"></canvas>
+        </div>
+        <div class="panel" id="logistic-map-panel">
+            <canvas class="canvas right" id="canvas-logistic-map"></canvas>
+            <canvas class="canvas right" id="canvas-logistic-map-overlay"></canvas>
+            <div id="progressbar-logistic-map">
+                <label id="label-progressbar-logistic-map" for="progressbar-logistic-map">Error</label>
+                <progress id="progress-logistic-map" value="0" max="0"></progress>
+            </div>
+        </div>
+        <div class="panel" id="waveform-panel">
+            <canvas class="canvas" id="canvas-waveform"></canvas>
         </div>
     </div>
 </main>

@@ -624,6 +624,30 @@ public:
         ctx.call<void>("stroke");
     }
 
+    void drawWaveform(emscripten::val canvas) {
+      // TODO: make a canvas class to interpret emscripten::val canvas
+      std::cout << "drawing waveform\n";
+
+      if (plotData.size() == 0 || plotData[0].size() == 0) {
+        return;
+      }
+      emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+      // TODO: canvasWidth for drawPlot?
+      auto canvasWidth = canvas["clientWidth"].as<int>();
+      auto canvasHeight = canvas["clientHeight"].as<int>();
+      ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
+      auto& currentPlotData = audioData[currentXCoord];
+      ctx.call<void>("beginPath");
+      // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
+      ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(0.5 * canvasHeight));
+      for (int i = 0; i < canvasWidth; i++) {
+        ctx.call<void>("lineTo", emscripten::val(i), emscripten::val(0.5 * canvasHeight - 0.5 * canvasHeight * currentPlotData[i]));
+      }
+      ctx.call<void>("stroke");
+
+      std::cout << "drew waveform\n";
+    }
+
     void createGainNode(int nodeID) {
         auto& audioCtx = audioCtxWrapper.value();
         auto& currentGainNodeWrapper = gainNodes.at(nodeID);
@@ -740,8 +764,10 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
             logisticMap.currentlyCalculating = true;
             // technically redundant since calculateLogisticMap will also set currentlyCalculating to true, but starting
             // the thread is slower so we will manually set this to be true in time for the renderLogisticMap logic
-            std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap);
-            calculations.detach();
+            // TODO: reenable pthreads
+            logisticMap.calculateLogisticMap();
+            // std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap);
+            // calculations.detach();
             progressbar["style"].set("visibility", emscripten::val("visible"));
         }
         finishValues.at(1) = true;
@@ -787,6 +813,14 @@ void RenderPlot(double DOMHighResTimeStamp)
     logisticMap.drawPlot(canvas);
 }
 
+void RenderWaveform(double DOMHighResTimeStamp)
+{
+  emscripten::val document = emscripten::val::global("document");
+  emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-waveform"));
+  auto& logisticMap = GetLogisticMap();
+  logisticMap.drawWaveform(canvas);
+}
+
 void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten::val array)
 {
     emscripten::val window = emscripten::val::global("window");
@@ -829,6 +863,7 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
             if (!logisticMap.currentlyCalculating && mouseIsDown) {
                 logisticMap.sonifyLogisticMap();
                 window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
+              window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
             }
         }
     }
@@ -844,6 +879,7 @@ void InitializeCanvases(emscripten::val event)
     ManipulateLogisticMap(true, true, false);
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
+    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
     // TODO: make canvas-logistic-map-overlay not hardcoded
     auto logisticMapCanvasOverlay = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
     document.call<void>("addEventListener", emscripten::val("mousedown"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
@@ -866,6 +902,9 @@ int main()
     document.call<void>("addEventListener", emscripten::val("mousemove"), emscripten::val::module_property("InteractWithCanvas"));
     */
     // initialize width and height of the canvas
+    // TODO:
+    //  window.call<void>("addEventListener", emscripten::val("onload"), emscripten::val::module_property("InitializeCanvases"));
+    //  https://html.spec.whatwg.org/multipage/scripting.html#attr-script-async
     InitializeCanvases(emscripten::val::null());
 
     // retrieve all settings from localStorage and set the appropriate boxes to "checked" and put the appropriate data into preview
@@ -881,5 +920,6 @@ EMSCRIPTEN_BINDINGS(bindings)\
   emscripten::function("RenderLogisticMapOverlay", RenderLogisticMapOverlay);\
   emscripten::function("RenderLogisticMap", RenderLogisticMap);\
   emscripten::function("RenderPlot", RenderPlot);\
+  emscripten::function("RenderWaveform", RenderWaveform);\
   emscripten::function("InteractWithLogisticMapCanvas", InteractWithLogisticMapCanvas);\
 };

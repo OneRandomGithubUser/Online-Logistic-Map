@@ -52,10 +52,18 @@ body
 {
     font-family: monospace;
 }
+#output-panels
+{
+    position: absolute;
+    top: 0;
+    bottom: 100px;
+    left: 0;
+    right: 0;
+}
 #plot-panel
 {
     top: 0;
-    bottom: 100px;
+    bottom: 25%;
     left: 0;
     right: 50%;
     border-width: 2px 1px 1px 2px;
@@ -63,10 +71,18 @@ body
 #logistic-map-panel
 {
     top: 0;
-    bottom: 100px;
+    bottom: 25%;
     left: 50%;
     right: 0;
     border-width: 2px 2px 1px 1px;
+}
+#waveform-panel
+{
+    top: 75%;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-width: 2px;
 }
 #canvas-logistic-map
 {
