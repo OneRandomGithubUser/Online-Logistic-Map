@@ -932,6 +932,8 @@ int main()
     emscripten::val window = emscripten::val::global("window");
     emscripten::val document = emscripten::val::global("document");
     window.call<void>("addEventListener", emscripten::val("resize"), emscripten::val::module_property("InitializeCanvases"));
+    emscripten::val recalculateButton = document.call<emscripten::val>("getElementById", emscripten::val("recalculate-button"));
+    recalculateButton.call<void>("addEventListener", emscripten::val("mouseup"), emscripten::val::module_property("InitializeCanvases"));
     /*
     document.call<void>("addEventListener", emscripten::val("mousedown"), emscripten::val::module_property("InteractWithCanvas"));
     document.call<void>("addEventListener", emscripten::val("mouseup"), emscripten::val::module_property("InteractWithCanvas"));
