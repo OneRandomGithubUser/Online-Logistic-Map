@@ -67,7 +67,7 @@ public:
     int ifftMinFrequency;
     int ifftMaxFrequency;
     int ifftAudioSamples;
-    bool doAudioPeakNormalization;
+    bool doIfftAudioPeakNormalization;
     double changeChannelAudioLerpTime;
     // ifftAudioSamples cannot be less than twice ifftMaxFrequency
     const int maxCalculationStage = 2;
@@ -173,7 +173,7 @@ public:
         ifftMinFrequency = 0;
         ifftMaxFrequency = 1000;
         ifftAudioSamples = std::pow(2, 14);
-        doAudioPeakNormalization = true;
+        doIfftAudioPeakNormalization = true;
         changeChannelAudioLerpTime = 0.002;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
@@ -230,7 +230,7 @@ public:
         resizeVector<std::vector<double>>(audioData, newCanvasWidth, columnAudioData);
         gainNodes.resize(newCanvasWidth);
         //std::fill(gainNodes.begin(), gainNodes.begin() + std::min(gainNodes.size(), newCanvasWidth), defaultValue);
-        auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE);
+        auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
         fftw_destroy_plan(fftwPlan);
         fftwPlan = newFftwPlan;
         canvasWidth = newCanvasWidth;
@@ -305,11 +305,12 @@ private:
                                         int audioDataIndex = (int) std::floor(bucket + ifftMinFrequency);
                                         currentAudioData.at(audioDataIndex) += audioDataIncrement;
                                     } else {
+                                        // normalizedCurrentValue ranges from [0, 1)
                                         // currentAudioDataPoint ranges from [-1, 1)
                                         double currentAudioDataPoint = normalizedCurrentValue * 2 - 1;
                                         // effectively divide the sample rate by rawAudioSampleRateFactor so that the oscillations between two values are not outside the range of human hearing
-                                        for (int k = i * rawAudioSampleRateFactor;
-                                             k < (i + 1) * rawAudioSampleRateFactor; k++) {
+                                        for (int k = iteration * rawAudioSampleRateFactor;
+                                             k < (iteration + 1) * rawAudioSampleRateFactor; k++) {
                                             currentAudioData.at(k) = currentAudioDataPoint;
                                         }
                                     }
@@ -416,7 +417,7 @@ private:
                                 }
                             }
                         }
-                        if (doAudioPeakNormalization) {
+                        if (sonificationApplyInverseFourierTransform and doIfftAudioPeakNormalization) {
                             double maxAbsoluteAudio = 0;
                             for (const double audioDataPoint : currentAudioData) {
                                 maxAbsoluteAudio = std::max(maxAbsoluteAudio, std::abs(audioDataPoint));
