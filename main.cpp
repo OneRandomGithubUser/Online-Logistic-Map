@@ -575,16 +575,19 @@ public:
             return;
         }
         if (isCurrentlyPlaying) {
-            ctx.set("fillStyle", emscripten::val("rgba(255, 255, 255, 0.5)"));
+            // TODO: save and restore for all
+            ctx.call<void>("save");
+            ctx.set("strokeStyle", emscripten::val("rgba(0, 0, 0, 1)"));
+            ctx.set("fillStyle", emscripten::val("rgba(0, 0, 0, 0.5)"));
             ctx.call<void>("fillRect", 0, canvasHeight - minY.at(currentXCoord), currentXCoord, -(maxY.at(currentXCoord) - minY.at(currentXCoord)));
-            ctx.set("fillStyle", emscripten::val("black"));
+            ctx.call<void>("strokeRect", 0, canvasHeight - minY.at(currentXCoord), currentXCoord, -(maxY.at(currentXCoord) - minY.at(currentXCoord)));
+            ctx.call<void>("restore");
         } else {
-            ctx.call<void>("setLineDash", solidLinePattern);
+            ctx.call<void>("setLineDash", dashedLinePattern);
             ctx.call<void>("beginPath");
             ctx.call<void>("moveTo", emscripten::val(currentXCoord), emscripten::val(0));
             ctx.call<void>("lineTo", emscripten::val(currentXCoord), canvas["height"]);
             ctx.call<void>("stroke");
-            ctx.call<void>("setLineDash", dashedLinePattern);
         }
         ctx.call<void>("beginPath");
         ctx.call<void>("moveTo", emscripten::val(currentX), emscripten::val(0));
