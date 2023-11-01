@@ -172,7 +172,7 @@ public:
         rawAudioSampleRateFactor = 20;
         ifftMinFrequency = 0;
         ifftMaxFrequency = 1000;
-        ifftAudioSamples = 10000;
+        ifftAudioSamples = std::pow(2, 14);
         doAudioPeakNormalization = true;
         changeChannelAudioLerpTime = 0.002;
         backgroundRGBA.at(0) = 255;
