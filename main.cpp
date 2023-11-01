@@ -67,7 +67,8 @@ public:
     int ifftMinFrequency;
     int ifftMaxFrequency;
     int ifftAudioSamples;
-    double audioLerpTime;
+    bool doAudioPeakNormalization;
+    double changeChannelAudioLerpTime;
     // ifftAudioSamples cannot be less than twice ifftMaxFrequency
     const int maxCalculationStage = 2;
     std::array<unsigned char, 4> backgroundRGBA;
@@ -172,7 +173,8 @@ public:
         ifftMinFrequency = 0;
         ifftMaxFrequency = 1000;
         ifftAudioSamples = 10000;
-        audioLerpTime = 0.002;
+        doAudioPeakNormalization = true;
+        changeChannelAudioLerpTime = 0.002;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
         backgroundRGBA.at(2) = 255;
@@ -411,6 +413,17 @@ private:
                                     if (currentMaxFrequency < currentFrequencies.at(pixelHeight)) {
                                         currentMaxFrequency = currentFrequencies.at(pixelHeight);
                                     }
+                                }
+                            }
+                        }
+                        if (doAudioPeakNormalization) {
+                            double maxAbsoluteAudio = 0;
+                            for (const double audioDataPoint : currentAudioData) {
+                                maxAbsoluteAudio = std::max(maxAbsoluteAudio, std::abs(audioDataPoint));
+                            }
+                            if (maxAbsoluteAudio != 1) {
+                                for (double audioDataPoint : currentAudioData) {
+                                    audioDataPoint /= maxAbsoluteAudio;
                                 }
                             }
                         }
@@ -716,14 +729,14 @@ public:
         auto& currentGainNode = gainNodes.at(nodeID).value();
         currentGainNode["gain"].call<void>("cancelAndHoldAtTime", emscripten::val(currentTime));
         currentGainNode["gain"].call<void>("setValueAtTime", currentGainNode["gain"]["value"], emscripten::val(currentTime));
-        currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(1), emscripten::val(currentTime + audioLerpTime));
+        currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(1), emscripten::val(currentTime + changeChannelAudioLerpTime));
     }
 
     void lerpStopGainNode(int nodeID, double currentTime) {
         auto& currentGainNode = gainNodes.at(nodeID).value();
         currentGainNode["gain"].call<void>("cancelAndHoldAtTime", emscripten::val(currentTime));
         currentGainNode["gain"].call<void>("setValueAtTime", currentGainNode["gain"]["value"], emscripten::val(currentTime));
-        currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(0), emscripten::val(currentTime + audioLerpTime));
+        currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(0), emscripten::val(currentTime + changeChannelAudioLerpTime));
     }
 
     void sonifyLogisticMap() {
