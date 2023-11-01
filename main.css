@@ -23,24 +23,15 @@ body
     position: absolute;
     cursor: crosshair;
 }
-.right
-{
-    right: 0;
-}
-.left
-{
-    right: 0;
-}
 .panel
 {
-    position: absolute;
     border-color: black;
     border-style: solid;
-    box-sizing: content-box;
+    box-sizing: border-box;
+    border-width: 0;
 }
 .panel, #progressbar-logistic-map
 {
-    position: absolute;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -48,41 +39,63 @@ body
     width: auto;
     height: auto;
 }
+.start-justify
+{
+    justify-content: start;
+}
+.grow
+{
+    flex-grow: 1;
+}
+.row
+{
+    flex-direction: row;
+}
+.left
+{
+    justify-content: start;
+    flex-direction: row;
+}
+.right
+{
+    justify-content: start;
+    flex-direction: row-reverse;
+}
 #label-progressbar-logistic-map
 {
     font-family: monospace;
 }
+#main-panel
+{
+    width: 100vw;
+    height: 100vh;
+}
 #output-panels
 {
-    position: absolute;
-    top: 0;
-    bottom: 100px;
-    left: 0;
-    right: 0;
+    width: 100%;
+    height: max(85%, 100% - 100px);
 }
 #plot-panel
 {
-    top: 0;
-    bottom: 25%;
-    left: 0;
-    right: 50%;
+    height: 100%;
+    width: 50%;
     border-width: 2px 1px 1px 2px;
 }
 #logistic-map-panel
 {
-    top: 0;
-    bottom: 25%;
-    left: 50%;
-    right: 0;
+    height: 100%;
+    width: 50%;
     border-width: 2px 2px 1px 1px;
 }
 #waveform-panel
 {
-    top: 75%;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    width: 100%;
     border-width: 2px;
+}
+#same-axis-plots-panel
+{
+    height: 75%;
+    width: 100%;
 }
 #canvas-logistic-map
 {
@@ -90,14 +103,12 @@ body
 }
 #canvas-logistic-map-overlay
 {
+    position: absolute;
     z-index: 1;
 }
 #ui-panel
 {
-    bottom: 0;
-    top: calc(100% - 100px);
-    left: 0;
-    right: 0;
+    width: 100%;
     border-width: 1px 2px 2px 2px;
 }
 #x-input
@@ -114,4 +125,9 @@ body
 {
     left: 50%;
     right: 0;
+}
+#recalculate-button
+{
+    padding: 10px;
+    height: 75%
 }

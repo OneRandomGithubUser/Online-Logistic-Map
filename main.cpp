@@ -862,6 +862,7 @@ void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten:
     // subtract 2 to account for the border of at least 1 px
     canvas.set("width", emscripten::val(std::ceil(boundingBox["width"].as<double>() - 2)));
     canvas.set("height", emscripten::val(std::ceil(boundingBox["height"].as<double>() - 2)));
+    std::cout << std::ceil(boundingBox["height"].as<double>() - 2) << "\n";
     emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
     ctx.set("textAlign", emscripten::val("center"));
     ctx.set("textBaseline", emscripten::val("middle"));
