@@ -48,6 +48,9 @@ namespace emscripten {
 
 class LogisticMap {
 public:
+
+    enum class DefaultEquationType { LOGISTIC, EXPONENTIAL, GAMMA };
+
     // TODO: make getters and setters for these to automatically update needsToRecalculate
     int functionID;
     int iterationsToSteadyState;
@@ -513,43 +516,38 @@ private:
     }
 
 public:
-    void calculateLogisticMap() {
-        emscripten::val document = emscripten::val::global("document");
-        emscripten::val dropdown = document.call<emscripten::val>("getElementById",
-                                                                  emscripten::val("equation"));
-        std::string dropdownValue = dropdown["value"].as<std::string>();
-        switch (dropdownValue[0]) {
-          case 'l':
-            std::cout << "detected logistic function\n";
-            functionID = 0;
+    
+    void setDefaultEquationType(LogisticMap::DefaultEquationType equationType) {
+        using enum LogisticMap::DefaultEquationType;
+        switch (equationType) {
+            case LOGISTIC:
+                functionID = 0;
 
-            rLowerBound = 2.75;
-            rUpperBound = 4;
-            xLowerBound = 0;
-            xUpperBound = 1;
-            break;
-          case 'e':
-            std::cout << "detected exponential function\n";
-            functionID = 1;
+                rLowerBound = 2.75;
+                rUpperBound = 4;
+                xLowerBound = 0;
+                xUpperBound = 1;
+                break;
+            case EXPONENTIAL:
+                functionID = 1;
 
-            rLowerBound = 1;
-            rUpperBound = 30;
-            xLowerBound = 0;
-            xUpperBound = 11;
-            break;
-          case 'g':
-            std::cout << "detected gamma function\n";
-            functionID = 2;
+                rLowerBound = 1;
+                rUpperBound = 30;
+                xLowerBound = 0;
+                xUpperBound = 11;
+                break;
+            case GAMMA:
+                functionID = 2;
 
-            rLowerBound = 1;
-            rUpperBound = 9;
-            xLowerBound = 0;
-            xUpperBound = 10;
-            break;
-          default:
-            functionID = 0;
-            break;
+                rLowerBound = 1;
+                rUpperBound = 9;
+                xLowerBound = 0;
+                xUpperBound = 10;
+                break;
         }
+    }
+    
+    void calculateLogisticMap() {
         bool calculationWasSuccessful;
         do {
             calculationWasSuccessful = tryCalculateLogisticMap();
@@ -790,21 +788,41 @@ LogisticMap& GetLogisticMap() {
     return logisticMap;
 }
 
-bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
+bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
     auto& logisticMap = GetLogisticMap();
     auto document = emscripten::val::global("document");
     auto canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map"));
     auto progress = document.call<emscripten::val>("getElementById", emscripten::val("progress-logistic-map"));
     auto progressbar = document.call<emscripten::val>("getElementById", emscripten::val("progressbar-logistic-map"));
     auto progressLabel = document.call<emscripten::val>("getElementById", emscripten::val("label-progressbar-logistic-map"));
+
+    std::array<bool, 5> finishValues = {false, false, false, false, false};
+
+    if (reparameterizeLogisticMap) {
+        auto dropdown = document.call<emscripten::val>("getElementById", emscripten::val("equation"));
+        std::string dropdownValue = dropdown["value"].as<std::string>();
+        if (dropdownValue == "logistic") {
+            logisticMap.setDefaultEquationType(LogisticMap::DefaultEquationType::LOGISTIC);
+            finishValues.at(0) = true;
+        } else if (dropdownValue == "exponential") {
+            logisticMap.setDefaultEquationType(LogisticMap::DefaultEquationType::EXPONENTIAL);
+            finishValues.at(0) = true;
+        } else if (dropdownValue == "gamma") {
+            logisticMap.setDefaultEquationType(LogisticMap::DefaultEquationType::GAMMA);
+            finishValues.at(0) = true;
+        } else {
+            std::cerr << "dropdown value of " + dropdownValue + " was not found.\n";
+            finishValues.at(0) = false;
+        }
+    }
+
     // we subtract 2 * logisticMap.extraSymmetricalSamplesPerPixel because of the subpixel edges that go off the
     // centers of the edge pixels of the map, which we don't calculate
-    std::array<bool, 4> finishValues = {false, false, false, false};
     if (resizeLogisticMap) {
         auto canvasWidth = canvas["clientWidth"].as<int>();
         auto canvasHeight = canvas["clientHeight"].as<int>();
         logisticMap.resizeLogisticMap(canvasWidth, canvasHeight);
-        finishValues.at(0) = true;
+        finishValues.at(1) = true;
     }
     if (calculateLogisticMap) {
         if (logisticMap.currentlyCalculating) {
@@ -813,13 +831,11 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
             logisticMap.currentlyCalculating = true;
             // technically redundant since calculateLogisticMap will also set currentlyCalculating to true, but starting
             // the thread is slower so we will manually set this to be true in time for the renderLogisticMap logic
-            // TODO: reenable pthreads
-            logisticMap.calculateLogisticMap();
-            // std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap);
-            // calculations.detach();
+            std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap); // equivalent to logisticMap.calculateLogisticMap()
+            calculations.detach();
             progressbar["style"].set("visibility", emscripten::val("visible"));
         }
-        finishValues.at(1) = true;
+        finishValues.at(2) = true;
     }
     if (renderLogisticMap) {
         if (logisticMap.currentlyCalculating) {
@@ -832,10 +848,10 @@ bool ManipulateLogisticMap(bool resizeLogisticMap, bool calculateLogisticMap, bo
         } else {
             progressbar["style"].set("visibility", emscripten::val("hidden"));
             logisticMap.drawLogisticMap(canvas);
-            finishValues.at(2) = true;
+            finishValues.at(3) = true;
         }
     }
-    return finishValues.at(0) && resizeLogisticMap || finishValues.at(1) && calculateLogisticMap || finishValues.at(2) && renderLogisticMap;
+    return finishValues.at(0) && reparameterizeLogisticMap || finishValues.at(1) && resizeLogisticMap || finishValues.at(2) && calculateLogisticMap || finishValues.at(3) && renderLogisticMap;
 }
 
 void RenderLogisticMapOverlay(double DOMHighResTimeStamp)
@@ -847,7 +863,7 @@ void RenderLogisticMapOverlay(double DOMHighResTimeStamp)
 }
 
 void RenderLogisticMap(double DOMHighResTimeStamp) {
-    bool manipulationWasFinished = ManipulateLogisticMap(false, false, true);
+    bool manipulationWasFinished = ManipulateLogisticMap(false, false, false, true);
     emscripten::val window = emscripten::val::global("window");
     if (!manipulationWasFinished) {
         window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
@@ -926,7 +942,7 @@ void InitializeCanvases(emscripten::val event)
     emscripten::val document = emscripten::val::global("document");
     document.call<emscripten::val>("querySelectorAll", emscripten::val(".canvas")).call<void>("forEach", emscripten::val::module_property("InitializeCanvas"));
     emscripten::val window = emscripten::val::global("window");
-    ManipulateLogisticMap(true, true, false);
+    ManipulateLogisticMap(true, true, true, false);
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
