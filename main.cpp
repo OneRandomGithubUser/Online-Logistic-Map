@@ -184,7 +184,7 @@ public:
         ifftMaxFrequency = 1000;
         ifftAudioSamples = std::pow(2, 14);
         doIfftAudioPeakNormalization = true;
-        changeChannelAudioLerpTime = 0.002;
+        changeChannelAudioLerpTime = 0.005;
         backgroundRGBA.at(0) = 255;
         backgroundRGBA.at(1) = 255;
         backgroundRGBA.at(2) = 255;
@@ -807,7 +807,7 @@ public:
         }
         int x = currentMouseCoordinates.at(0);
         if (x < 0) {x = 0;}
-        if (x > canvasWidth) {x = canvasWidth;}
+        if (x >= canvasWidth) {x = canvasWidth - 1;}
         auto& currentGainNodeWrapper = gainNodes.at(x);
         if (!currentGainNodeWrapper.has_value()) {
             // This is a relatively intensive task so currentTime should be measured after this step
