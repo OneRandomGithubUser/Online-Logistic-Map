@@ -441,6 +441,7 @@ private:
                 safeToRecalculate = true;
                 parameterConditionVariable.notify_all();
                 if (needsToRecalculate) {
+                    needsToRecalculate = false;
                     return false;
                 }
             }
@@ -549,6 +550,7 @@ private:
                 iterationsCalculated++;
             }
             if (needsToRecalculate) {
+                needsToRecalculate = false;
                 return false;
             }
         }
