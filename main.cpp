@@ -85,7 +85,8 @@ public:
     int canvasWidth;
     int canvasHeight;
     double overlayTextMargin;
-    bool showLabel;
+    bool enableOverlay;
+    bool doShowOverlay;
     int currentXCoord;
     std::mutex parameterMutex;
     std::condition_variable parameterConditionVariable;
@@ -201,7 +202,8 @@ public:
         canvasWidth = 0;
         canvasHeight = 0;
         overlayTextMargin = 15;
-        showLabel = true;
+        enableOverlay = true;
+        doShowOverlay = false;
         currentXCoord = 0;
         needsToRecalculate = false;
         currentlyCalculating = false;
@@ -645,15 +647,15 @@ public:
             ctx.call<void>("lineTo", emscripten::val(currentXCoord), canvas["height"]);
             ctx.call<void>("stroke");
         }
-        ctx.call<void>("beginPath");
-        ctx.call<void>("moveTo", emscripten::val(currentX), emscripten::val(0));
-        ctx.call<void>("lineTo", emscripten::val(currentX), canvas["height"]);
-        ctx.call<void>("stroke");
-        ctx.call<void>("beginPath");
-        ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(currentY));
-        ctx.call<void>("lineTo", canvas["width"], emscripten::val(currentY));
-        ctx.call<void>("stroke");
-        if (showLabel) {
+        if (enableOverlay and doShowOverlay) {
+            ctx.call<void>("beginPath");
+            ctx.call<void>("moveTo", emscripten::val(currentX), emscripten::val(0));
+            ctx.call<void>("lineTo", emscripten::val(currentX), canvas["height"]);
+            ctx.call<void>("stroke");
+            ctx.call<void>("beginPath");
+            ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(currentY));
+            ctx.call<void>("lineTo", canvas["width"], emscripten::val(currentY));
+            ctx.call<void>("stroke");
             // NOTE: the label relies on the assumption that the canvases are centered
             std::string xText = "r = " + std::to_string(rLowerBound + (currentX / canvasWidth) * (rUpperBound - rLowerBound));
             std::string yText = "x = " + std::to_string(xLowerBound + (1 - currentY / canvasHeight) * (xUpperBound - xLowerBound));
@@ -834,6 +836,14 @@ public:
             isCurrentlyPlaying = false;
         }
     }
+
+    void showOverlay() {
+        doShowOverlay = true;
+    }
+
+    void hideOverlay() {
+        doShowOverlay = false;
+    }
 };
 
 LogisticMap& GetLogisticMap() {
@@ -984,6 +994,12 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
               window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
             }
         }
+    } else if (eventName == "mouseenter") {
+        auto &logisticMap = GetLogisticMap();
+        logisticMap.showOverlay();
+    } else if (eventName == "mouseout") {
+        auto& logisticMap = GetLogisticMap();
+        logisticMap.hideOverlay();
     }
     emscripten::val window = emscripten::val::global("window");
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
@@ -1003,6 +1019,8 @@ void InitializeCanvases(emscripten::val event)
     document.call<void>("addEventListener", emscripten::val("mousedown"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
     document.call<void>("addEventListener", emscripten::val("mouseup"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
     logisticMapCanvasOverlay.call<void>("addEventListener", emscripten::val("mousemove"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
+    logisticMapCanvasOverlay.call<void>("addEventListener", emscripten::val("mouseenter"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
+    logisticMapCanvasOverlay.call<void>("addEventListener", emscripten::val("mouseout"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
 }
 
 void InitializeAllSettings()
