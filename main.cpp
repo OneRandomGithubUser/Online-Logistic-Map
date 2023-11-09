@@ -13,6 +13,8 @@
 #include <optional>
 #include <stdexcept>
 #include <mutex>
+#include <numbers>
+#include <random>
 #include <condition_variable>
 #include "fftw-3.3.10/api/fftw3.h"
 
@@ -87,6 +89,8 @@ public:
     int currentXCoord;
     std::mutex parameterMutex;
     std::condition_variable parameterConditionVariable;
+    std::random_device randomDevice;
+    std::optional<int> rngSeed;
 
     // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
     // through the UI. It is read only by CalculateLogisticMap.
@@ -106,7 +110,9 @@ public:
     std::vector<std::vector<double>> frequencies;
     std::vector<std::vector<double>> dataPoints;
     std::vector<unsigned char> imageData;
-    std::vector<double> fftwIO;
+    // std::vector<double> fftwIO;
+    fftw_complex* fftwIn;
+    std::vector<double> fftwOut;
     std::vector<std::vector<double>> plotData;
     std::vector<std::vector<double>> audioData;
     std::vector<double> maxFrequencies;
@@ -204,6 +210,7 @@ public:
         currentMouseCoordinates.at(0) = 0;
         currentMouseCoordinates.at(1) = 0;
         isCurrentlyPlaying = false;
+        rngSeed = std::nullopt;
     }
     template <typename T> void resizeVector(std::vector<T>& vector, int newSize, T defaultValue) {
         vector.resize(newSize, defaultValue);
@@ -226,14 +233,18 @@ public:
         std::vector<double> columnAudioData;
         if (sonificationApplyInverseFourierTransform) {
             resizeVector<double>(columnAudioData, ifftAudioSamples, 0.0);
-            resizeVector<double>(fftwIO, 2 * ifftAudioSamples, 0.0);
+            // resizeVector<double>(fftwIO, 2 * ifftAudioSamples, 0.0);
+            fftw_free(fftwIn);
+            fftwIn = (fftw_complex*) fftw_alloc_complex(2 * ifftAudioSamples);
+            resizeVector<double>(fftwOut, 2 * ifftAudioSamples, 0.0);
         } else {
             resizeVector<double>(columnAudioData, iterationsToShow * rawAudioSampleRateFactor, 0.0);
         }
         resizeVector<std::vector<double>>(audioData, newCanvasWidth, columnAudioData);
         gainNodes.resize(newCanvasWidth);
         //std::fill(gainNodes.begin(), gainNodes.begin() + std::min(gainNodes.size(), newCanvasWidth), defaultValue);
-        auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+        // auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+        auto newFftwPlan = fftw_plan_dft_c2r_1d(2 * ifftAudioSamples, fftwIn, &fftwOut[0], FFTW_ESTIMATE);
         fftw_destroy_plan(fftwPlan);
         fftwPlan = newFftwPlan;
         canvasWidth = newCanvasWidth;
@@ -247,6 +258,8 @@ private:
         iterationsCalculated = 0;
         numIterations = numRValues;
         calculationStage = 1;
+        std::mt19937 rng(rngSeed.value_or(randomDevice()));
+        std::uniform_real_distribution<> randomIfftPhase(0, 2 * std::numbers::pi);
         {
             // calculationStage 1: do the actual calculations
             double rPixelStep = (rUpperBound - rLowerBound) / canvasWidth;
@@ -420,17 +433,6 @@ private:
                                 }
                             }
                         }
-                        if (sonificationApplyInverseFourierTransform and doIfftAudioPeakNormalization) {
-                            double maxAbsoluteAudio = 0;
-                            for (const double audioDataPoint : currentAudioData) {
-                                maxAbsoluteAudio = std::max(maxAbsoluteAudio, std::abs(audioDataPoint));
-                            }
-                            if (maxAbsoluteAudio != 1) {
-                                for (double audioDataPoint : currentAudioData) {
-                                    audioDataPoint /= maxAbsoluteAudio;
-                                }
-                            }
-                        }
                         iterationsCalculated++;
                     }
                 }
@@ -496,20 +498,62 @@ private:
                     pixelIndex -= canvasWidth * 4;
                 }
                 if (sonificationApplyInverseFourierTransform) {
-                    auto currentAudioData = audioData.at(i);
-                    // fftwIO is in halfcomplex format and currentAudioData has just the real components
-                    // we want the imaginary parts to be 0 (for now at least)
-                    currentAudioData.resize(fftwIO.size(), 0.0);
-                    fftwIO = currentAudioData;
-                    fftw_execute(fftwPlan);
-                    audioData.at(i) = fftwIO;
+                    {
+                        const auto& currentAudioData = audioData.at(i);
+
+                        // fftwIO is in halfcomplex format and currentAudioData has just the real components
+                        // we want the imaginary parts to be 0 (for now at least)
+
+                        // currentAudioData.resize(2 * ifftAudioSamples, 0.0);
+                        // fftwIO = currentAudioData;
+                        // NOTE: assumes size of fftwIn is 2 * ifftAudioSamples
+                        for (int currentAudioIndex = 0; currentAudioIndex < 2 * ifftAudioSamples; currentAudioIndex++) {
+                            if (currentAudioIndex < currentAudioData.size()) {
+                                double magnitude = currentAudioData.at(currentAudioIndex);
+                                double randomPhase = randomIfftPhase(rng);
+                                fftwIn[currentAudioIndex][0] = magnitude * std::cos(randomPhase);
+                                fftwIn[currentAudioIndex][1] = magnitude * std::sin(randomPhase);
+                            } else {
+                                fftwIn[currentAudioIndex][0] = 0.0;
+                                fftwIn[currentAudioIndex][1] = 0.0;
+                            }
+                        }
+                        fftw_execute(fftwPlan);
+                        // audioData.at(i) = fftwIO;
+                        audioData.at(i) = fftwOut;
+                    }
+
+                    // apply audio peak normalization
+                    if (doIfftAudioPeakNormalization) {
+                        auto& currentAudioData = audioData.at(i);
+                        double maxAbsoluteAudio = 0;
+                        // audioDataPoint is in [-1, 1)
+                        for (int j = 0; j < currentAudioData.size(); j++) {
+                            auto audioDataPoint = currentAudioData.at(j);
+                            maxAbsoluteAudio = std::max(maxAbsoluteAudio, std::abs(audioDataPoint));
+                        }
+                        // for (const auto audioDataPoint : currentAudioData) {
+                        //     maxAbsoluteAudio = std::max(maxAbsoluteAudio, std::abs(audioDataPoint - 0.5));
+                        // }
+                        // maxAbsoluteAudio is in [0, 0.5)
+                        if (maxAbsoluteAudio != 1) {
+                            for (auto& audioDataPoint : currentAudioData) {
+                                audioDataPoint /= maxAbsoluteAudio;
+                            }
+                        }
+                    }
                 }
+
                 iterationsCalculated++;
             }
             if (needsToRecalculate) {
                 return false;
             }
         }
+
+        // disconnect gain nodes from previous calculations
+        disconnectAllGainNodes();
+
         std::cout << "calculated logistic map\n";
         currentlyCalculating = false;
         return true;
@@ -685,12 +729,12 @@ public:
       auto canvasWidth = canvas["clientWidth"].as<int>();
       auto canvasHeight = canvas["clientHeight"].as<int>();
       ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
-      auto& currentPlotData = audioData[currentXCoord];
+      auto& currentPlotData = audioData.at(currentXCoord);
       ctx.call<void>("beginPath");
       // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
       ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(0.5 * canvasHeight));
       for (int i = 0; i < canvasWidth; i++) {
-        ctx.call<void>("lineTo", emscripten::val(i), emscripten::val(0.5 * canvasHeight - 0.5 * canvasHeight * currentPlotData[i]));
+        ctx.call<void>("lineTo", emscripten::val(i), emscripten::val(0.5 * canvasHeight - 0.5 * canvasHeight * currentPlotData.at(i)));
       }
       ctx.call<void>("stroke");
     }
@@ -722,6 +766,15 @@ public:
         bufferSourceNode.call<void>("start", emscripten::val(0));
         bufferSourceNode.call<void>("connect", gainNode);
         gainNode.call<void>("connect", audioCtx["destination"]);
+    }
+
+    void disconnectAllGainNodes() {
+        for (auto& gainNodeOptWrapper : gainNodes) {
+            if (gainNodeOptWrapper.has_value()) {
+                gainNodeOptWrapper.value().call<void>("disconnect");
+                gainNodeOptWrapper.reset();
+            }
+        }
     }
 
     void lerpPlayGainNode(int nodeID, double currentTime) {
@@ -895,7 +948,6 @@ void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten:
     // subtract 2 to account for the border of at least 1 px
     canvas.set("width", emscripten::val(std::ceil(boundingBox["width"].as<double>() - 2)));
     canvas.set("height", emscripten::val(std::ceil(boundingBox["height"].as<double>() - 2)));
-    std::cout << std::ceil(boundingBox["height"].as<double>() - 2) << "\n";
     emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
     ctx.set("textAlign", emscripten::val("center"));
     ctx.set("textBaseline", emscripten::val("middle"));
