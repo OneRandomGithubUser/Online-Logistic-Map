@@ -562,6 +562,10 @@ private:
     }
 
 public:
+
+    void setStartingValue(double x0) {
+        startingValue = x0;
+    }
     
     void setDefaultEquationType(LogisticMap::DefaultEquationType equationType) {
         using enum LogisticMap::DefaultEquationType;
@@ -851,6 +855,34 @@ LogisticMap& GetLogisticMap() {
     return logisticMap;
 }
 
+void PrintThrownExceptionToCerr(std::string prependText, const std::exception& e) {
+    std::cerr << prependText << "\nMore Info:\n" << e.what() << "\n";
+}
+
+void PrintThrownNonExceptionToCerr(std::string prependText = "") {
+    std::cerr << prependText << "Unknown non-exception thrown like exception.\n";
+}
+
+void SetInputToSuccess(emscripten::val input) {
+    try {
+        input["style"].set("backgroundColor", emscripten::val(""));
+    } catch (const std::exception& e) {
+        PrintThrownExceptionToCerr("Unknown exception.", e);
+    } catch (...) {
+        PrintThrownNonExceptionToCerr();
+    }
+}
+
+void SetInputToFailure(emscripten::val input) {
+  try {
+    input["style"].set("backgroundColor", emscripten::val("pink"));
+  } catch (const std::exception& e) {
+    PrintThrownExceptionToCerr("Unknown exception.", e);
+  } catch (...) {
+    PrintThrownNonExceptionToCerr();
+  }
+}
+
 bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
     auto& logisticMap = GetLogisticMap();
     auto document = emscripten::val::global("document");
@@ -867,16 +899,41 @@ bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMa
         if (dropdownValue == "logistic") {
             logisticMap.setDefaultEquationType(LogisticMap::DefaultEquationType::LOGISTIC);
             finishValues.at(0) = true;
+            SetInputToSuccess(dropdown);
         } else if (dropdownValue == "exponential") {
             logisticMap.setDefaultEquationType(LogisticMap::DefaultEquationType::EXPONENTIAL);
             finishValues.at(0) = true;
+            SetInputToSuccess(dropdown);
         } else if (dropdownValue == "gamma") {
             logisticMap.setDefaultEquationType(LogisticMap::DefaultEquationType::GAMMA);
             finishValues.at(0) = true;
+            SetInputToSuccess(dropdown);
         } else {
             std::cerr << "dropdown value of " + dropdownValue + " was not found.\n";
             finishValues.at(0) = false;
+            SetInputToFailure(dropdown);
         }
+
+        auto x0Input = document.call<emscripten::val>("getElementById", emscripten::val("x"));
+        std::string x0InputVal = x0Input["value"].as<std::string>();
+        double x0;
+        try {
+            x0 = std::stod(x0InputVal);
+            SetInputToSuccess(x0Input);
+        } catch (const std::invalid_argument& e) {
+            std::cerr << "x0 was not a valid number: " + x0InputVal + "\nMore Info:\n" + e.what() + "\n";
+            SetInputToFailure(x0Input);
+        } catch (const std::out_of_range& e) {
+            std::cerr << "x0 was out of range: " + x0InputVal + "\nMore Info:\n" + e.what() + "\n";
+            SetInputToFailure(x0Input);
+        } catch (const std::exception& e) {
+            std::cerr << "Unknown exception.\nMore Info:\n" << e.what() << "\n";
+            SetInputToFailure(x0Input);
+        } catch (...) {
+            std::cerr << "Unknown non-exception non-string thrown as exception.\n";
+            SetInputToFailure(x0Input);
+        }
+        logisticMap.setStartingValue(x0);
     }
 
     // we subtract 2 * logisticMap.extraSymmetricalSamplesPerPixel because of the subpixel edges that go off the
