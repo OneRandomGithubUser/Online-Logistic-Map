@@ -269,7 +269,6 @@ private:
             for (int i = 0; i < canvasWidth; i++) {
                 if (needsToRecalculate) {
                     // TODO: cancelling calculation currently chimerical
-                    std::cout << "cancelled calculation of logistic map\n";
                     break;
                 }
                 double pixelR = rLowerBound + rPixelStep * i;
@@ -441,6 +440,7 @@ private:
                 safeToRecalculate = true;
                 parameterConditionVariable.notify_all();
                 if (needsToRecalculate) {
+                    std::cout << "cancelled calculation of logistic map\n";
                     needsToRecalculate = false;
                     return false;
                 }
@@ -458,7 +458,6 @@ private:
             double cutoffFrequency = std::exp(-logScalingFactor);
             for (int i = 0; i < canvasWidth; i++) {
                 if (needsToRecalculate) {
-                    std::cout << "cancelled calculation of logistic map\n";
                     break;
                 }
                 int pixelIndex = (canvasWidth * (canvasHeight - 1) + i) * 4;
@@ -550,6 +549,7 @@ private:
                 iterationsCalculated++;
             }
             if (needsToRecalculate) {
+                std::cout << "cancelled calculation of logistic map\n";
                 needsToRecalculate = false;
                 return false;
             }
@@ -985,6 +985,7 @@ void RenderLogisticMapOverlay(double DOMHighResTimeStamp)
 }
 
 void RenderLogisticMap(double DOMHighResTimeStamp) {
+    // TODO: only render once per frame
     bool manipulationWasFinished = ManipulateLogisticMap(false, false, false, true);
     emscripten::val window = emscripten::val::global("window");
     if (!manipulationWasFinished) {
