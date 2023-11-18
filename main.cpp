@@ -1007,7 +1007,8 @@ bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMa
             progress.set("max", emscripten::val(logisticMap.numIterations));
             std::string calculationStageString = std::to_string(logisticMap.calculationStage) + "/" + std::to_string(logisticMap.maxCalculationStage);
             std::string iterationsCalculatedString = std::to_string(logisticMap.iterationsCalculated) + "/" + std::to_string(logisticMap.numIterations);
-            std::string progressString = "Rendering Logistic Map:\nStage " + calculationStageString + "\nrValue " + iterationsCalculatedString;
+            std::string progressString = "Calculating Logistic Map:\nStage " + calculationStageString + "\nrValue " + iterationsCalculatedString;
+            // TODO: use proper text node instead
             progressLabel.set("innerHTML", emscripten::val(progressString));
         } else {
             progressbar["style"].set("visibility", emscripten::val("hidden"));
@@ -1119,6 +1120,12 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
 void InitializeCanvases(emscripten::val event)
 {
     emscripten::val document = emscripten::val::global("document");
+
+    auto progressLabel = document.call<emscripten::val>("getElementById", emscripten::val("label-progressbar-logistic-map"));
+    std::string progressString = "Initializing...";
+    // TODO: use proper text node instead
+    progressLabel.set("innerHTML", emscripten::val(progressString));
+
     document.call<emscripten::val>("querySelectorAll", emscripten::val(".canvas")).call<void>("forEach", emscripten::val::module_property("InitializeCanvas"));
     emscripten::val window = emscripten::val::global("window");
     ManipulateLogisticMap(true, true, true, false);
