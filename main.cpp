@@ -92,6 +92,7 @@ public:
     std::condition_variable parameterConditionVariable;
     std::random_device randomDevice;
     std::optional<int> rngSeed;
+    bool doStartGraphAtIteration0;
 
     // This variable will be updated by CalculateLogisticMap when it is finished calculating and by parameter changes
     // through the UI. It is read only by CalculateLogisticMap.
@@ -116,6 +117,7 @@ public:
     std::vector<double> fftwOut;
     std::vector<std::vector<double>> plotData;
     std::vector<std::vector<double>> audioData;
+    std::vector<std::vector<double>> graphData;
     std::vector<double> maxFrequencies;
     std::vector<double> minY;
     std::vector<double> maxY;
@@ -244,6 +246,13 @@ public:
         }
         resizeVector<std::vector<double>>(audioData, newCanvasWidth, columnAudioData);
         gainNodes.resize(newCanvasWidth);
+        std::vector<double> columnGraphData;
+        if (doStartGraphAtIteration0) {
+            resizeVector<double>(columnGraphData, iterationsToSteadyState + iterationsToShow, 0.0);
+        } else {
+            resizeVector<double>(columnGraphData, iterationsToShow, 0.0);
+        }
+        resizeVector<std::vector<double>>(graphData, newCanvasWidth, columnGraphData);
         //std::fill(gainNodes.begin(), gainNodes.begin() + std::min(gainNodes.size(), newCanvasWidth), defaultValue);
         // auto newFftwPlan = fftw_plan_r2r_1d(fftwIO.size(), &fftwIO[0], &fftwIO[0], FFTW_HC2R, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
         auto newFftwPlan = fftw_plan_dft_c2r_1d(2 * ifftAudioSamples, fftwIn, &fftwOut[0], FFTW_ESTIMATE);
@@ -296,6 +305,7 @@ private:
                     auto &nextMaxFrequency = maxFrequencies.at(nextFrequenciesIndex);
                     auto &currentDataPoints = dataPoints.at(i);
                     auto &currentAudioData = audioData.at(i);
+                    auto &currentGraphData = graphData.at(i);
                     double audioDataIncrement = 0.5 / iterationsToShow;
                     // this is half of the inverse of iterationsToShow since the IFFT is doubled
                     for (int j = -extraSymmetricalSamplesPerPixel; j <= extraSymmetricalSamplesPerPixel; j++) {
@@ -305,6 +315,13 @@ private:
                         double currentValue = startingValue;
                         for (int iteration = 0; iteration < iterationsToSteadyState; iteration++) {
                             currentValue = LogisticFunction(currentR, currentValue);
+                            // normalize currentValue's range from [xLowerBound, xUpperBound) to [0, 1)
+                            double normalizedCurrentValue =
+                                    (currentValue - xLowerBound) / (xUpperBound - xLowerBound);
+                            // graph
+                            if (doStartGraphAtIteration0) {
+                                currentGraphData.at(iteration) = normalizedCurrentValue;
+                            }
                         }
                         bool currentSubpixelIsCentered = (j == 0);
                         for (int iteration = 0; iteration < iterationsToShow; iteration++) {
@@ -330,6 +347,12 @@ private:
                                              k < (iteration + 1) * rawAudioSampleRateFactor; k++) {
                                             currentAudioData.at(k) = currentAudioDataPoint;
                                         }
+                                    }
+                                    // graph
+                                    if (doStartGraphAtIteration0) {
+                                        currentGraphData.at(iteration + iterationsToSteadyState) = normalizedCurrentValue;
+                                    } else {
+                                        currentGraphData.at(iteration) = normalizedCurrentValue;
                                     }
                                     // plot
                                     currentDataPoints.at(iteration) = currentValue;
@@ -741,10 +764,29 @@ public:
       ctx.call<void>("beginPath");
       // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
       ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(0.5 * canvasHeight));
-      for (int i = 0; i < canvasWidth; i++) {
+      for (int i = 0; i < std::min(currentPlotData.size(), (std::size_t) canvasWidth); i++) {
         ctx.call<void>("lineTo", emscripten::val(i), emscripten::val(0.5 * canvasHeight - 0.5 * canvasHeight * currentPlotData.at(i)));
       }
       ctx.call<void>("stroke");
+    }
+
+    void drawGraph(emscripten::val canvas) {
+        static const double EXPANSION_FACTOR = 5;
+        if (plotData.size() == 0 || plotData[0].size() == 0) {
+            return;
+        }
+        emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
+        auto canvasWidth = canvas["clientWidth"].as<int>();
+        auto canvasHeight = canvas["clientHeight"].as<int>();
+        ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
+        auto& currentPlotData = graphData.at(currentXCoord);
+        ctx.call<void>("beginPath");
+        // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
+        ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(0.5 * canvasHeight));
+        for (int i = 0; i < std::min(currentPlotData.size(), (std::size_t) std::ceil(canvasWidth / EXPANSION_FACTOR)); i++) {
+            ctx.call<void>("lineTo", emscripten::val(i * EXPANSION_FACTOR), emscripten::val(canvasHeight * currentPlotData.at(i)));
+        }
+        ctx.call<void>("stroke");
     }
 
     void createGainNode(int nodeID) {
@@ -1009,6 +1051,14 @@ void RenderWaveform(double DOMHighResTimeStamp)
   logisticMap.drawWaveform(canvas);
 }
 
+void RenderGraph(double DOMHighResTimeStamp)
+{
+    emscripten::val document = emscripten::val::global("document");
+    emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-graph"));
+    auto& logisticMap = GetLogisticMap();
+    logisticMap.drawGraph(canvas);
+}
+
 void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten::val array)
 {
     emscripten::val window = emscripten::val::global("window");
@@ -1051,7 +1101,8 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
             if (!logisticMap.currentlyCalculating && mouseIsDown) {
                 logisticMap.sonifyLogisticMap();
                 window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
-              window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
+                window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
+                window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderGraph"));
             }
         }
     } else if (eventName == "mouseenter") {
@@ -1074,6 +1125,7 @@ void InitializeCanvases(emscripten::val event)
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderPlot"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMap"));
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderWaveform"));
+    window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderGraph"));
     // TODO: make canvas-logistic-map-overlay not hardcoded
     auto logisticMapCanvasOverlay = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
     document.call<void>("addEventListener", emscripten::val("mousedown"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
@@ -1119,5 +1171,6 @@ EMSCRIPTEN_BINDINGS(bindings)\
   emscripten::function("RenderLogisticMap", RenderLogisticMap);\
   emscripten::function("RenderPlot", RenderPlot);\
   emscripten::function("RenderWaveform", RenderWaveform);\
+  emscripten::function("RenderGraph", RenderGraph);\
   emscripten::function("InteractWithLogisticMapCanvas", InteractWithLogisticMapCanvas);\
 };
