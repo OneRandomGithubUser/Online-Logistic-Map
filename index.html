@@ -17,21 +17,25 @@
         <div class="panel" id="output-panels">
             <div class="panel row" id="same-axis-plots-panel">
                 <div class="panel" id="plot-panel">
+                    <div class="panel-label"><p class="label-text">The integration of the function at the specified r</p></div>
                     <canvas class="canvas left" id="canvas-plot"></canvas>
                 </div>
                 <div class="panel" id="logistic-map-panel">
                     <canvas class="canvas right" id="canvas-logistic-map"></canvas>
                     <canvas class="canvas right" id="canvas-logistic-map-overlay"></canvas>
-                    <div id="progressbar-logistic-map">
+                    <div class="progressbar" id="progressbar-logistic-map">
                         <label id="label-progressbar-logistic-map" for="progressbar-logistic-map">Initializing...</label>
                         <progress id="progress-logistic-map" value="0" max="0"></progress>
                     </div>
+                    <div class="panel-label"><p class="label-text">Map of the function at all r (Click and drag on the graph to change r!)</p></div>
                 </div>
             </div>
             <div class="panel grow" id="graph-panel">
+                <div class="panel-label"><p class="label-text">The function at the specified r</p></div>
                 <canvas class="canvas" id="canvas-graph"></canvas>
             </div>
             <div class="panel grow" id="waveform-panel">
+                <div class="panel-label"><p class="label-text">The audio output at the specified r</p></div>
                 <canvas class="canvas" id="canvas-waveform"></canvas>
             </div>
         </div>
