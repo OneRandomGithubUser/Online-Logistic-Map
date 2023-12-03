@@ -68,6 +68,7 @@ public:
     bool antiAliasingEnabled;
     bool logarithmicShadingEnabled; // alternative is linear shading
     bool sonificationApplyInverseFourierTransform;
+    bool sonificationLogarithmicSampling;
     int rawAudioSampleRateFactor;
     int ifftMinFrequency;
     int ifftMaxFrequency;
@@ -181,8 +182,9 @@ public:
         antiAliasingEnabled = true;
         logarithmicShadingEnabled = true; // alternative is linear shading
         sonificationApplyInverseFourierTransform = true;
+        sonificationLogarithmicSampling = true; // TODO
         rawAudioSampleRateFactor = 20;
-        ifftMinFrequency = 0;
+        ifftMinFrequency = 100;
         ifftMaxFrequency = 1000;
         ifftAudioSamples = std::pow(2, 14);
         doIfftAudioPeakNormalization = true;
@@ -577,9 +579,6 @@ private:
                 return false;
             }
         }
-
-        // disconnect gain nodes from previous calculations
-        disconnectAllGainNodes();
 
         std::cout << "calculated logistic map\n";
         currentlyCalculating = false;
@@ -1011,6 +1010,8 @@ bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMa
             // TODO: use proper text node instead
             progressLabel.set("innerHTML", emscripten::val(progressString));
         } else {
+            // disconnect gain nodes from previous calculations
+            logisticMap.disconnectAllGainNodes();
             progressbar["style"].set("visibility", emscripten::val("hidden"));
             logisticMap.drawLogisticMap(canvas);
             finishValues.at(3) = true;
