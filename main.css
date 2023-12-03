@@ -6,6 +6,10 @@ body
     -webkit-tap-highlight-color: transparent; /* apparently does not work with Firefox mobile? */
     background: ghostwhite;
 }
+.red
+{
+    color: red;
+}
 .warning
 {
     position: fixed;
