@@ -223,6 +223,7 @@ public:
         std::fill(vector.begin(), vector.begin() + std::min((int) vector.size(), newSize), defaultValue);
     }
     void resizeLogisticMap(int newCanvasWidth, int newCanvasHeight) {
+        // TODO: fix bug where logistic map resized while mouse is held down
         if (newCanvasWidth <= 0 || newCanvasHeight <= 0) {
             throw std::invalid_argument("resizeLogisticMap only accepts positive integers");
         }
