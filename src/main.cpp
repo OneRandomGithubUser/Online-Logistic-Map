@@ -16,7 +16,7 @@
 #include <numbers>
 #include <random>
 #include <condition_variable>
-#include "fftw-3.3.10/api/fftw3.h"
+#include "../fftw-3.3.10/api/fftw3.h"
 
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
 namespace emscripten {

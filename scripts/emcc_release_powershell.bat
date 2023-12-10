@@ -1,3 +1,4 @@
-call emcc_command_release.bat
-call emsdk.bat
-%emcc_powershell%
+cd ..
+call scripts/upstream/emcc_command_release.bat
+call scripts/upstream/emsdk.bat
+%emcc_command_powershell%
