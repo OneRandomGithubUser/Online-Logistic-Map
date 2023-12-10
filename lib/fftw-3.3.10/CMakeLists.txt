@@ -113,7 +113,7 @@ endif ()
 
 
 if (ENABLE_THREADS)
-  find_package (Threads)
+  find_package (threads)
 endif ()
 if (Threads_FOUND)
   if(CMAKE_USE_PTHREADS_INIT)
@@ -223,7 +223,7 @@ file(GLOB           fftw_rdft_simd_avx2_SOURCE      rdft/simd/avx2/*.c  rdft/sim
 file(GLOB           fftw_reodft_SOURCE              reodft/*.c          reodft/*.h)
 file(GLOB           fftw_simd_support_SOURCE        simd-support/*.c    simd-support/*.h)
 file(GLOB           fftw_libbench2_SOURCE           libbench2/*.c       libbench2/*.h)
-list (REMOVE_ITEM   fftw_libbench2_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/libbench2/useropt.c)
+list (REMOVE_ITEM   fftw_libbench2_SOURCE libbench2/useropt.c)
 
 set(SOURCEFILES
     ${fftw_api_SOURCE}
@@ -246,14 +246,14 @@ set(SOURCEFILES
 )
 
 set(fftw_par_SOURCE
-    threads/api.c
-    threads/conf.c
-    threads/ct.c
-    threads/dft-vrank-geq1.c
-    threads/f77api.c
-    threads/hc2hc.c
-    threads/rdft-vrank-geq1.c
-    threads/vrank-geq1-rdft2.c)
+        threads/api.c
+        threads/conf.c
+        threads/ct.c
+        threads/dft-vrank-geq1.c
+        threads/f77api.c
+        threads/hc2hc.c
+        threads/rdft-vrank-geq1.c
+        threads/vrank-geq1-rdft2.c)
 
 set (fftw_threads_SOURCE ${fftw_par_SOURCE} threads/threads.c)
 set (fftw_omp_SOURCE ${fftw_par_SOURCE} threads/openmp.c)
