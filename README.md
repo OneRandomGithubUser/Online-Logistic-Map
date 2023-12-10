@@ -1,5 +1,10 @@
 An online logistic map visualization and sonification, live at https://onerandomgithubuser.github.io/Online-Logistic-Map/
 
+# Features
+
+<img src="res/Demo_1440p.png" alt="alt text" title="image Title" />
+Screenshot of the program in action. The logistic map is shown, with a specific value of r able to be shown. The integration at that r as a function of x, the function at that r as a function of n, and the audio output at that r as a function of n are shown. x0 and the function done at each iteration can be adjusted.
+
 # Compiling from source
 
 To compile from source, first download and install Emscripten: https://emscripten.org/docs/getting_started/downloads.html. Then run either scripts/emcc_release_powershell.bat or scripts/emcc_release_windows_terminal.bat, which will compile in PowerShell or in Windows Terminal (from the Microsoft Store), respectively. To view the webpage, install Python and run either tools/server_local_installation_python.bat if your Python is a local installation or tools/server_windows_store_python.bat if your Python is the Windows Store version, then go to localhost:8000 in your favorite web browser. This is currently Windows only, other OS shell scripts may come soon.
