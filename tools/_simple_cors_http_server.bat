@@ -1,1 +1,0 @@
-python _simple_cors_http_server.py
