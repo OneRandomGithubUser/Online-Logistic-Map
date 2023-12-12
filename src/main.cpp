@@ -237,7 +237,7 @@ public:
         sonificationApplyInverseFourierTransform = true;
         sonificationLogarithmicSampling = true; // TODO: implement this
         rawAudioSampleRateFactor = 20;
-        ifftMinFrequency = 100;
+        ifftMinFrequency = 200;
         ifftMaxFrequency = 1000;
         ifftAudioSamples = std::pow(2, 14);
         doIfftAudioPeakNormalization = true;
@@ -908,7 +908,7 @@ public:
         // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
         ctx.call<void>("moveTo", emscripten::val(0), emscripten::val(0.5 * canvasHeight));
         for (int i = 0; i < std::min(currentPlotData.size(), (std::size_t) std::ceil(canvasWidth / EXPANSION_FACTOR)); i++) {
-            ctx.call<void>("lineTo", emscripten::val(i * EXPANSION_FACTOR), emscripten::val(canvasHeight * currentPlotData.at(i)));
+            ctx.call<void>("lineTo", emscripten::val(i * EXPANSION_FACTOR), emscripten::val(canvasHeight - canvasHeight * currentPlotData.at(i)));
         }
         ctx.call<void>("stroke");
     }
