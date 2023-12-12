@@ -99,7 +99,7 @@ body
 #plot-panel
 {
     height: 100%;
-    width: 50%;
+    width: 25%;
     border-left-width: 2px;
     border-right-width: 1px;
     border-top-width: 2px;
@@ -109,7 +109,7 @@ body
 #logistic-map-panel
 {
     height: 100%;
-    width: 50%;
+    width: 75%;
     border-left-width: 1px;
     border-right-width: 2px;
     border-top-width: 2px;
@@ -133,7 +133,7 @@ body
 }
 #same-axis-plots-panel
 {
-    height: 60%;
+    height: 75%;
     width: 100%;
 }
 #canvas-logistic-map

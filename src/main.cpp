@@ -100,7 +100,7 @@ public:
     int widthSamplesPerPixel;
     int numRValues;
     std::array<double, 2> currentMouseCoordinates;
-    int canvasWidth;
+    int canvasWidth; // TODO: change canvasWidth and canvasHeight name
     int canvasHeight;
     double overlayTextMargin;
     bool enableOverlay;
@@ -852,6 +852,8 @@ public:
         }
         emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
         ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
+        auto canvasWidth = canvas["width"].as<double>();
+        auto canvasHeight = canvas["height"].as<double>();
         auto& currentPlotData = plotData[currentXCoord];
         ctx.call<void>("beginPath");
         // NOTE: this assumes the plot canvas and the logistic map canvas have the same dimensions
@@ -874,8 +876,8 @@ public:
       }
       emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
       // TODO: canvasWidth for drawPlot?
-      auto canvasWidth = canvas["clientWidth"].as<int>();
-      auto canvasHeight = canvas["clientHeight"].as<int>();
+      auto canvasWidth = canvas["clientWidth"].as<double>();
+      auto canvasHeight = canvas["clientHeight"].as<double>();
       ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
       auto& currentPlotData = audioData.at(currentXCoord);
       ctx.call<void>("beginPath");
@@ -898,8 +900,8 @@ public:
             return;
         }
         emscripten::val ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
-        auto canvasWidth = canvas["clientWidth"].as<int>();
-        auto canvasHeight = canvas["clientHeight"].as<int>();
+        auto canvasWidth = canvas["clientWidth"].as<double>();
+        auto canvasHeight = canvas["clientHeight"].as<double>();
         ctx.call<void>("clearRect", emscripten::val(0), emscripten::val(0), canvas["width"], canvas["height"]);
         auto& currentPlotData = graphData.at(currentXCoord);
         ctx.call<void>("beginPath");
