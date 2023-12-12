@@ -1,3 +1,11 @@
+/**
+ * @file
+ *
+ * @section DESCRIPTION
+ *
+ * Calculates a logistic map and renders it in the browser using Emscripten.
+ */
+
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
 #include <emscripten/emscripten.h>
@@ -18,6 +26,10 @@
 #include <condition_variable>
 #include "../lib/fftw-3.3.10/api/fftw3.h"
 
+/**
+ * Allows an std::vector to be used in the constructor and be converted into an emscripten::val which corresponds to a
+ * JS array
+ */
 // copied from https://github.com/emscripten-core/emscripten/issues/11070#issuecomment-717675128
 namespace emscripten {
     namespace internal {
@@ -48,6 +60,11 @@ namespace emscripten {
 }  // namespace internal
 }  // namespace emscripten
 
+// TODO: separate this class into multiple smaller functionality handers using composition
+// TODO: move this class to a file without emscripten functionality to increase portability in the future
+/**
+ * The class which computes the logistic map using the given parameters.
+ */
 class LogisticMap {
 public:
 
@@ -128,18 +145,37 @@ public:
     fftw_plan fftwPlan;
 
 public:
+  /**
+   * Sets the number of iterations that the logistic map will calculate but will not show in output data (except in plot
+   * data if specified). This will mark the logistic map to be recalculated.
+   * @param iterations Number of iterations to calculate before showing output data.
+   */
     void set_iterations_to_steady_state(int iterations) {
         std::unique_lock<std::mutex> lock(parameterMutex);
         parameterConditionVariable.wait(lock, [this]{ return this->safeToRecalculate; });
         iterationsToSteadyState = iterations;
         needsToRecalculate = true;
     }
+    /**
+     * Sets the number of iterations that the logistic map will calculate and will show in output data. This will mark
+     * the logistic map to be recalculated.
+     * @param iterations Number of iterations to calculate and show in output data.
+     */
     void set_iterations_to_show(int iterations) {
         std::unique_lock<std::mutex> lock(parameterMutex);
         parameterConditionVariable.wait(lock, [this]{ return this->safeToRecalculate; });
         iterationsToShow = iterations;
         needsToRecalculate = true;
     }
+    /**
+     * Sets the number of extra symmetrical samples for $r$ to calculate per width pixel. This will mark the logistic
+     * map to be recalculated.
+     *
+     * For example, if extraSamples == 0, only 1 sample for $r$ will be taken per width pixel, which disables
+     * supersampling. If extraSamples == 3, 2*3+1 = 7 samples for $r$ will be taken per width pixel, increasing
+     * calculation requirements by 7-fold. This parameter does not affect the sampling of the height pixels.
+     * @param extraSamples
+     */
     void set_extra_symmetrical_samples_per_pixel(int extraSamples) {
         std::unique_lock<std::mutex> lock(parameterMutex);
         parameterConditionVariable.wait(lock, [this]{ return this->safeToRecalculate; });
@@ -149,6 +185,13 @@ public:
 
 private:
 
+    /**
+     * Calculates $x_{n+1}$ given $x_n$ and $r$.
+     * @param r The value for $r$
+     * @param input The value for $x_n$
+     * @return The value for $x_{n+1}$
+     * @todo Change this to a user defined lambda function
+     */
     double LogisticFunction(double r, double input) {
         switch (functionID) {
             case 0:
@@ -163,10 +206,19 @@ private:
     }
 
 public:
+    /**
+     * Sets the current mouse coordinates of the user.
+     * @param x The x-coordinate of the mouse
+     * @param y The y-coordinate of the mouse
+     */
     void set_current_mouse_coordinates (double x, double y) {
         currentMouseCoordinates.at(0) = x;
         currentMouseCoordinates.at(1) = y;
     }
+    /**
+     * Default constructor for a logistic map, initializing using default values
+     * @todo Switch this to an initializer list
+     */
     LogisticMap() {
         functionID = 0;
         iterationsToSteadyState = 1000;
@@ -180,9 +232,9 @@ public:
         xLowerBound = 0;
         xUpperBound = 1;
         antiAliasingEnabled = true;
-        logarithmicShadingEnabled = true; // alternative is linear shading
+        logarithmicShadingEnabled = true; // alternative is linear shading, TODO: use enum for this
         sonificationApplyInverseFourierTransform = true;
-        sonificationLogarithmicSampling = true; // TODO
+        sonificationLogarithmicSampling = true; // TODO: implement this
         rawAudioSampleRateFactor = 20;
         ifftMinFrequency = 100;
         ifftMaxFrequency = 1000;
@@ -218,10 +270,24 @@ public:
         isCurrentlyPlaying = false;
         rngSeed = std::nullopt;
     }
+private:
+    /**
+     * Resizes a `vector` of type `T` to a `newSize` with the given `defaultValue`
+     * @tparam T Type of the vector
+     * @param vector Vector to resize
+     * @param newSize New size for the vector
+     * @param defaultValue Default value that all elements of the vector will be set to
+     */
     template <typename T> void resizeVector(std::vector<T>& vector, int newSize, T defaultValue) {
         vector.resize(newSize, defaultValue);
         std::fill(vector.begin(), vector.begin() + std::min((int) vector.size(), newSize), defaultValue);
     }
+public:
+    /**
+     * Resize (but does not recalculate or re-render) the logistic map, deleting old data.
+     * @param newCanvasWidth New canvas width to resize the logistic map to
+     * @param newCanvasHeight New canvas height to resize the logistic map to
+     */
     void resizeLogisticMap(int newCanvasWidth, int newCanvasHeight) {
         // TODO: fix bug where logistic map resized while mouse is held down
         if (newCanvasWidth <= 0 || newCanvasHeight <= 0) {
@@ -264,8 +330,17 @@ public:
         canvasWidth = newCanvasWidth;
         canvasHeight = newCanvasHeight;
         numRValues = canvasWidth * widthSamplesPerPixel - 2 * extraSymmetricalSamplesPerPixel;
+
+        needsToRecalculate = true;
     }
 private:
+    /**
+     * Attempt to calculate the logistic map. Returns early if the map needs to be recalculated (such as if a parameter
+     * is changed).
+     * @return Whether the logisic map calculation could be completed
+     * @todo Split this function into smaller, more comprehensible functions
+     * @todo Optimize this function for SIMD
+     */
     bool tryCalculateLogisticMap() {
         std::cout << "calculating logistic map\n";
         currentlyCalculating = true;
@@ -588,8 +663,13 @@ private:
 
 public:
 
+    /**
+     * Sets the starting value for the logistic map. This will mark the logistic map to be recalculated.
+     * @param x0
+     */
     void setStartingValue(double x0) {
         startingValue = x0;
+        needsToRecalculate = true;
     }
     
     void setDefaultEquationType(LogisticMap::DefaultEquationType equationType) {
@@ -621,16 +701,31 @@ public:
                 break;
         }
     }
-    
+
+    /**
+     * Calculate the logistic map. This will repeatedly attempt to recalculate the logistic map until it succeeds.
+     *
+     * @warning This may be a very time-consuming function and should be called asynchronously.
+     */
     void calculateLogisticMap() {
         bool calculationWasSuccessful;
+        needsToRecalculate = false;
+        // continuously try to recalculate the logistic map
         do {
             calculationWasSuccessful = tryCalculateLogisticMap();
             std::cout << calculationWasSuccessful << " success\n";
         }
         while (!calculationWasSuccessful);
     }
+
+    /**
+     * Draws the logistic map to a JS canvas.
+     * @param canvas The JS canvas to draw to.
+     * @pre `canvas` is a valid JS representation of a canvas
+     */
     void drawLogisticMap(emscripten::val canvas) {
+        // TODO: add a special emscripten::val type to represent something that is confirmed to be a canvas
+        // TODO: add exception handling for an invalid canvas
         auto ctx = canvas.call<emscripten::val>("getContext", emscripten::val("2d"));
         auto canvasWidth = canvas["clientWidth"].as<int>();
         auto canvasHeight = canvas["clientHeight"].as<int>();
@@ -648,6 +743,12 @@ public:
         std::cout << "drew logistic map\n";
     }
 
+    /**
+     * Draws the logistic map overlay (mouseover graphics) to a JS canvas.
+     * @param canvas The JS canvas to draw to.
+     * @pre `canvas` is a valid JS representation of a canvas
+     * @todo Split up into multiple functions
+     */
     void drawLogisticMapOverlay(emscripten::val canvas) {
         static std::vector<double> solidLinePatternArray = {};
         static emscripten::val solidLinePattern = emscripten::val(solidLinePatternArray);
@@ -734,6 +835,11 @@ public:
         }
     }
 
+    /**
+     * Draws the logistic map plot (integration of the function at a specified r) to a JS canvas.
+     * @param canvas The JS canvas to draw to.
+     * @pre `canvas` is a valid JS representation of a canvas
+     */
     void drawPlot(emscripten::val canvas) {
         if (plotData.size() == 0 || plotData[0].size() == 0) {
             return;
@@ -750,6 +856,11 @@ public:
         ctx.call<void>("stroke");
     }
 
+    /**
+     * Draws the logistic map waveform (audio data) to a JS canvas.
+     * @param canvas The JS canvas to draw to.
+     * @pre `canvas` is a valid JS representation of a canvas
+     */
     void drawWaveform(emscripten::val canvas) {
       // TODO: make a canvas class to interpret emscripten::val canvas
       if (plotData.size() == 0 || plotData[0].size() == 0) {
@@ -770,6 +881,11 @@ public:
       ctx.call<void>("stroke");
     }
 
+    /**
+     * Draws the logistic map graph (the function at a specified r) to a JS canvas.
+     * @param canvas The JS canvas to draw to.
+     * @pre `canvas` is a valid JS representation of a canvas
+     */
     void drawGraph(emscripten::val canvas) {
         static const double EXPANSION_FACTOR = 5;
         if (plotData.size() == 0 || plotData[0].size() == 0) {
@@ -789,6 +905,10 @@ public:
         ctx.call<void>("stroke");
     }
 
+    /**
+     * Creates JS gain nodes for the audio data at the specified `nodeID`.
+     * @param nodeID The x-coordinate of the audio data to create
+     */
     void createGainNode(int nodeID) {
         auto& audioCtx = audioCtxWrapper.value();
         auto& currentGainNodeWrapper = gainNodes.at(nodeID);
@@ -818,6 +938,9 @@ public:
         gainNode.call<void>("connect", audioCtx["destination"]);
     }
 
+    /**
+     * Disconnects all gain nodes and prepares them for garbage collection in JS.
+     */
     void disconnectAllGainNodes() {
         for (auto& gainNodeOptWrapper : gainNodes) {
             if (gainNodeOptWrapper.has_value()) {
@@ -827,6 +950,12 @@ public:
         }
     }
 
+private:
+    /**
+     * Play a gain node with linear interpolation.
+     * @param nodeID The x-coordinate of the audio data to play
+     * @param currentTime The current time, as measured by the JS audio context
+     */
     void lerpPlayGainNode(int nodeID, double currentTime) {
         auto& currentGainNode = gainNodes.at(nodeID).value();
         currentGainNode["gain"].call<void>("cancelAndHoldAtTime", emscripten::val(currentTime));
@@ -834,6 +963,11 @@ public:
         currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(1), emscripten::val(currentTime + changeChannelAudioLerpTime));
     }
 
+    /**
+     * Stops a gain node with linear interpolation.
+     * @param nodeID The x-coordinate of the audio data to play
+     * @param currentTime The current time, as measured by the JS audio context
+     */
     void lerpStopGainNode(int nodeID, double currentTime) {
         auto& currentGainNode = gainNodes.at(nodeID).value();
         currentGainNode["gain"].call<void>("cancelAndHoldAtTime", emscripten::val(currentTime));
@@ -841,6 +975,12 @@ public:
         currentGainNode["gain"].call<void>("linearRampToValueAtTime", emscripten::val(0), emscripten::val(currentTime + changeChannelAudioLerpTime));
     }
 
+public:
+    /**
+     * Plays the calculated audio data of the logistic map at the stored x-coordinate.
+     * @pre The document has been interacted with to allow the creation of the audio context, as required by most
+     * browsers. See here: https://developer.chrome.com/blog/autoplay/#webaudio
+     */
     void sonifyLogisticMap() {
         if (!audioCtxWrapper.has_value()) {
             emscripten::val AudioContext = emscripten::val::global("AudioContext");
@@ -872,6 +1012,9 @@ public:
         lerpPlayGainNode(x, currentTime);
     }
 
+    /**
+     * Stops playing the audio data of the logistic map.
+     */
     void desonifyLogisticMap() {
         auto document = emscripten::val::global("document");
         emscripten::val canvas = document.call<emscripten::val>("getElementById", emscripten::val("canvas-logistic-map-overlay"));
@@ -885,28 +1028,51 @@ public:
         }
     }
 
+    /**
+     * Shows the logistic map overlay
+     */
     void showOverlay() {
         doShowOverlay = true;
     }
 
+    /**
+     * Hides the logistic map overlay
+     */
     void hideOverlay() {
         doShowOverlay = false;
     }
 };
 
+/**
+ * Gets the logistic map object, which is a singleton here.
+ * @return The LogisticMap object
+ */
 LogisticMap& GetLogisticMap() {
     static auto logisticMap = LogisticMap();
     return logisticMap;
 }
 
+/**
+ * Print an std::exception to std::cerr.
+ * @param prependText The text to prepend to the output message
+ * @param e The exception to throw
+ */
 void PrintThrownExceptionToCerr(std::string prependText, const std::exception& e) {
     std::cerr << prependText << "\nMore Info:\n" << e.what() << "\n";
 }
 
+/**
+ * Print something other than an std::exception to std::cerr,
+ * @param prependText The text to prepend to the output message
+ */
 void PrintThrownNonExceptionToCerr(std::string prependText = "") {
     std::cerr << prependText << "Unknown non-exception thrown like exception.\n";
 }
 
+/**
+ * Sets a JS input object to signify that a valid input was entered.
+ * @param input The JS input object
+ */
 void SetInputToSuccess(emscripten::val input) {
     try {
         input["style"].set("backgroundColor", emscripten::val(""));
@@ -917,6 +1083,10 @@ void SetInputToSuccess(emscripten::val input) {
     }
 }
 
+/**
+ * Sets a JS input object to signify that an invalid input was entered.
+ * @param input The JS input object
+ */
 void SetInputToFailure(emscripten::val input) {
   try {
     input["style"].set("backgroundColor", emscripten::val("pink"));
@@ -927,6 +1097,18 @@ void SetInputToFailure(emscripten::val input) {
   }
 }
 
+/**
+ * The primary input from the UI to the LogisticMap object. Performs various actions as needed.
+ * @param reparameterizeLogisticMap Whether to read new parameters on the page and mark the logistic map for
+ * recalculation
+ * @param resizeLogisticMap Whether to resize the logistic map, which erases all data and marks it for recalculation
+ * @param calculateLogisticMap Whether to calculate the logistic map in a new non-blocking thread
+ * @param renderLogisticMap Whether to draw the main logistic map (and reset the JS audio data) or logistic map
+ * calculation progressbar
+ * @return Whether ALL desired actions succeeded.
+ * @todo Separate this into multiple functions.
+ * @todo Shorter parameter names
+ */
 bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMap, bool calculateLogisticMap, bool renderLogisticMap) {
     auto& logisticMap = GetLogisticMap();
     auto document = emscripten::val::global("document");
@@ -994,7 +1176,7 @@ bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMa
         } else {
             logisticMap.currentlyCalculating = true;
             // technically redundant since calculateLogisticMap will also set currentlyCalculating to true, but starting
-            // the thread is slower so we will manually set this to be true in time for the renderLogisticMap logic
+            // the thread is async so we will manually set this to be true in time for the renderLogisticMap logic
             std::thread calculations(&LogisticMap::calculateLogisticMap, &logisticMap); // equivalent to logisticMap.calculateLogisticMap()
             calculations.detach();
             progressbar["style"].set("visibility", emscripten::val("visible"));
@@ -1021,6 +1203,10 @@ bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMa
     return finishValues.at(0) && reparameterizeLogisticMap || finishValues.at(1) && resizeLogisticMap || finishValues.at(2) && calculateLogisticMap || finishValues.at(3) && renderLogisticMap;
 }
 
+/**
+ * Renders the logistic map overlay.
+ * @param DOMHighResTimeStamp The timestamp, included for compatibility with JS requestAnimationFrame()
+ */
 void RenderLogisticMapOverlay(double DOMHighResTimeStamp)
 {
     emscripten::val document = emscripten::val::global("document");
@@ -1029,8 +1215,12 @@ void RenderLogisticMapOverlay(double DOMHighResTimeStamp)
     logisticMap.drawLogisticMapOverlay(canvas);
 }
 
+/**
+ * Renders the logistic map or logistic map calculation progressbar, deleting previous JS audio data if necessary.
+ * @param DOMHighResTimeStamp The timestamp, included for compatibility with JS requestAnimationFrame()
+ * @todo only render once per frame
+ */
 void RenderLogisticMap(double DOMHighResTimeStamp) {
-    // TODO: only render once per frame
     bool manipulationWasFinished = ManipulateLogisticMap(false, false, false, true);
     emscripten::val window = emscripten::val::global("window");
     if (!manipulationWasFinished) {
@@ -1038,6 +1228,10 @@ void RenderLogisticMap(double DOMHighResTimeStamp) {
     }
 }
 
+/**
+ * Renders the plot of the logistic map integration at the specified r.
+ * @param DOMHighResTimeStamp The timestamp, included for compatibility with JS requestAnimationFrame()
+ */
 void RenderPlot(double DOMHighResTimeStamp)
 {
     emscripten::val document = emscripten::val::global("document");
@@ -1046,6 +1240,10 @@ void RenderPlot(double DOMHighResTimeStamp)
     logisticMap.drawPlot(canvas);
 }
 
+/**
+ * Renders the waveform of the logistic map audio data at the specified r.
+ * @param DOMHighResTimeStamp The timestamp, included for compatibility with JS requestAnimationFrame()
+ */
 void RenderWaveform(double DOMHighResTimeStamp)
 {
   emscripten::val document = emscripten::val::global("document");
@@ -1054,6 +1252,10 @@ void RenderWaveform(double DOMHighResTimeStamp)
   logisticMap.drawWaveform(canvas);
 }
 
+/**
+ * Renders the graph of the logistic map function at the specified r.
+ * @param DOMHighResTimeStamp The timestamp, included for compatibility with JS requestAnimationFrame()
+ */
 void RenderGraph(double DOMHighResTimeStamp)
 {
     emscripten::val document = emscripten::val::global("document");
@@ -1062,6 +1264,12 @@ void RenderGraph(double DOMHighResTimeStamp)
     logisticMap.drawGraph(canvas);
 }
 
+/**
+ * Initialize the JS canvas, intended to be called within a JS for-each loop.
+ * @param canvas The canvas to initialize
+ * @param index The index of the canvas in the JS for-each loop
+ * @param array The array of the canvases in the JS for-each loop
+ */
 void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten::val array)
 {
     emscripten::val window = emscripten::val::global("window");
@@ -1077,6 +1285,10 @@ void InitializeCanvas(emscripten::val canvas, emscripten::val index, emscripten:
     ctx.set("font", emscripten::val("20px Arial"));
 }
 
+/**
+ * The sole function for interpretation of user input, intended to be used as a callback in a addEventListener().
+ * @param event The JS event to interpret.
+ */
 void InteractWithLogisticMapCanvas(emscripten::val event)
 {
     static bool mouseIsDown;
@@ -1119,6 +1331,10 @@ void InteractWithLogisticMapCanvas(emscripten::val event)
     window.call<void>("requestAnimationFrame", emscripten::val::module_property("RenderLogisticMapOverlay"));
 }
 
+ /**
+  * Initializes all relevant JS canvases, intended to be used as a callback in a addEventListener().
+  * @param event The event that triggers initialization, included for compatibility with addEventListener().
+  */
 void InitializeCanvases(emscripten::val event)
 {
     emscripten::val document = emscripten::val::global("document");
@@ -1144,10 +1360,18 @@ void InitializeCanvases(emscripten::val event)
     logisticMapCanvasOverlay.call<void>("addEventListener", emscripten::val("mouseout"), emscripten::val::module_property("InteractWithLogisticMapCanvas"));
 }
 
+/**
+ * Initialize all settings from the user's JS local data.
+ * @todo Implement storage and retrieval of user-defined settings
+ */
 void InitializeAllSettings()
 {
 }
 
+/**
+ * The main function to run on page load once Emscripten is ready.
+ * @return Success value
+ */
 int main()
 {
     emscripten::val window = emscripten::val::global("window");
@@ -1172,6 +1396,9 @@ int main()
     return 0;
 }
 
+/**
+ * Emscripten bindings to allow C++ functions to be run from the JS.
+ */
 EMSCRIPTEN_BINDINGS(bindings)\
 {\
   emscripten::function("InitializeCanvases", InitializeCanvases);\
