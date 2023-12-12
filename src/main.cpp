@@ -1397,10 +1397,21 @@ int main()
 }
 
 /**
+ * Get the exception text of a given Emscripten exception.
+ * @param exceptionPtr The pointer to the exception, outputted to the JS console as a number.
+ * @return The text of the exception.
+ * @todo Include this in exception handling
+ */
+std::string GetExceptionText(intptr_t exceptionPtr) {
+    return std::string(reinterpret_cast<std::exception*>(exceptionPtr)->what());
+}
+
+/**
  * Emscripten bindings to allow C++ functions to be run from the JS.
  */
 EMSCRIPTEN_BINDINGS(bindings)\
 {\
+  emscripten::function("GetExceptionText", GetExceptionText);\
   emscripten::function("InitializeCanvases", InitializeCanvases);\
   emscripten::function("InitializeCanvas", InitializeCanvas);\
   emscripten::function("RenderLogisticMapOverlay", RenderLogisticMapOverlay);\
