@@ -1,4 +1,6 @@
-An online logistic map visualization and sonification, live at [https://onerandomgithubuser.github.io/Online-Logistic-Map/](https://onerandomgithubuser.github.io/Online-Logistic-Map/)
+An online logistic map visualization and sonification, live at [https://onerandomgithubuser.github.io/Online-Logistic-Map/](https://onerandomgithubuser.github.io/Online-Logistic-Map/).
+
+WARNING: This site is not supported on Firefox Private Browsing mode, iOS, or on some old versions of browsers. For best results, use this website in the latest version of Google Chrome on desktop.
 
 # Features
 
