@@ -71,7 +71,7 @@ public:
     enum class DefaultEquationType { LOGISTIC, EXPONENTIAL, GAMMA };
 
     // TODO: make getters and setters for these to automatically update needsToRecalculate
-    int functionID;
+    LogisticMap::DefaultEquationType functionType;
     int iterationsToSteadyState;
     int iterationsToShow;
     int extraSymmetricalSamplesPerPixel;
@@ -193,12 +193,13 @@ private:
      * @todo Change this to a user defined lambda function
      */
     double LogisticFunction(double r, double input) {
-        switch (functionID) {
-            case 0:
+        using enum LogisticMap::DefaultEquationType;
+        switch (functionType) {
+            case LOGISTIC:
                 return r * input * (1 - input);
-            case 1:
+            case EXPONENTIAL:
                 return r * input * std::exp(-input);
-            case 2:
+            case GAMMA:
                 return r * 1 / std::tgamma(input);
             default:
                 return r * input * (1 - input);
@@ -220,7 +221,7 @@ public:
      * @todo Switch this to an initializer list
      */
     LogisticMap() {
-        functionID = 0;
+        functionType = LogisticMap::DefaultEquationType::LOGISTIC;
         iterationsToSteadyState = 1000;
         iterationsToShow = 2000;
         extraSymmetricalSamplesPerPixel = 2;
@@ -671,12 +672,16 @@ public:
         startingValue = x0;
         needsToRecalculate = true;
     }
-    
+
+    /**
+     * Sets the equation type to use in the logistic map. This will mark the logistic map to be recalculated.
+     * @param equationType The type of equation to use
+     */
     void setDefaultEquationType(LogisticMap::DefaultEquationType equationType) {
         using enum LogisticMap::DefaultEquationType;
         switch (equationType) {
             case LOGISTIC:
-                functionID = 0;
+                functionType = equationType;
 
                 rLowerBound = 2.75;
                 rUpperBound = 4;
@@ -684,7 +689,7 @@ public:
                 xUpperBound = 1;
                 break;
             case EXPONENTIAL:
-                functionID = 1;
+                functionType = equationType;
 
                 rLowerBound = 1;
                 rUpperBound = 30;
@@ -692,7 +697,7 @@ public:
                 xUpperBound = 11;
                 break;
             case GAMMA:
-                functionID = 2;
+                functionType = equationType;
 
                 rLowerBound = 1;
                 rUpperBound = 9;
@@ -700,6 +705,7 @@ public:
                 xUpperBound = 10;
                 break;
         }
+        needsToRecalculate = true;
     }
 
     /**
@@ -1120,6 +1126,7 @@ bool ManipulateLogisticMap(bool reparameterizeLogisticMap, bool resizeLogisticMa
     std::array<bool, 5> finishValues = {false, false, false, false, false};
 
     if (reparameterizeLogisticMap) {
+        // TODO: allow user to specify a specific value for r
         auto dropdown = document.call<emscripten::val>("getElementById", emscripten::val("equation"));
         std::string dropdownValue = dropdown["value"].as<std::string>();
         if (dropdownValue == "logistic") {
